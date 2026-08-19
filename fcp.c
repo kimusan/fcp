@@ -209,13 +209,8 @@ static void *worker_thread(void *arg) {
         if (identical == FCP_IDENTICAL_YES) {
             g_files_skipped++;
             g_bytes_skipped += item.size;
-            /* Count skipped files in progress (they're "instantly copied") */
-            if (g_progress.enabled) {
-                g_progress.total_all += item.size;
-                g_progress.total_done += item.size;
-            }
-            /* Update scanning progress to show skipped files */
-            fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped);
+            /* Update scanning progress to show skipped files (sets total_done/total_all) */
+            fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped, g_files_skipped, g_bytes_total);
             if (opt_verbose) {
                 fprintf(stderr, "fcp: skipped identical '%s'\n", item.src);
             }
@@ -308,9 +303,7 @@ static int copy_directory(const char *src, const char *dst) {
         g_files_scanned++;
         g_bytes_total += st.st_size;
         if (g_progress.enabled && g_progress.phase == FCP_PHASE_SCANNING) {
-            fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped);
-            /* Render progress during scanning */
-            fcp_progress_render(&g_progress);
+            fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped, g_files_skipped, g_bytes_total);
         }
 
         if (S_ISDIR(st.st_mode)) {
@@ -327,7 +320,7 @@ static int copy_directory(const char *src, const char *dst) {
                     g_progress.total_done += st.st_size;
                 }
                 /* Update scanning progress to show skipped files */
-                fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped);
+                fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped, g_files_skipped, g_bytes_total);
                 if (opt_verbose) {
                     fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
                 }
@@ -644,6 +637,8 @@ int main(int argc, char *argv[]) {
             /* Set total_all to total bytes found (skipped + to copy) so progress bar shows full work */
             g_progress.total_all = g_bytes_total;
             fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
+            /* Show initial progress bar with skipped bytes already counted */
+            fcp_progress_render(&g_progress);
         }
     } else {
         /* For single file, just copy directly */

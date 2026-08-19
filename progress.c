@@ -70,12 +70,14 @@ void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan) {
     progress->last_update_time = 0; /* Force first render */
 }
 
-void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uint64_t bytes_processed) {
+void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uint64_t bytes_processed, int files_skipped, uint64_t total_bytes_found) {
     progress->files_scanned = files_found;
-    /* Add processed (skipped) bytes to total_done for progress bar display */
-    if (bytes_processed > 0) {
-        progress->total_done += bytes_processed;
-        progress->total_all += bytes_processed;
+    progress->files_skipped_identical = files_skipped;
+    /* bytes_processed is the current total of skipped bytes (not incremental) */
+    progress->total_done = bytes_processed;
+    /* Track total bytes found so we can show progress during scanning */
+    if (total_bytes_found > progress->total_all) {
+        progress->total_all = total_bytes_found;
     }
 }
 
@@ -87,6 +89,8 @@ void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int
 
     if (!progress->enabled) return;
 
+    /* Move to new line after scanning info */
+    fprintf(stderr, "\n");
     fprintf(stderr, "  %d files to copy" COLOR_GRAY", %d identical skipped" COLOR_RESET "\n",
             files_to_copy, files_skipped);
     fflush(stderr);
@@ -138,7 +142,8 @@ void fcp_progress_render(fcp_progress_t *progress) {
 
     /* Scanning phase: show file count and skipped count */
     if (progress->phase == FCP_PHASE_SCANNING) {
-        fprintf(stderr, "\r" COLOR_BOLD "  Scanning..." COLOR_RESET
+        /* Clear line and show scanning info */
+        fprintf(stderr, "\r\033[K" COLOR_BOLD "  Scanning..." COLOR_RESET
                 " %d files" COLOR_GRAY", %d identical" COLOR_RESET,
                 progress->files_scanned, progress->files_skipped_identical);
         fflush(stderr);

@@ -54,8 +54,8 @@ void fcp_progress_init(fcp_progress_t *progress, bool enabled);
 /* Set scanning phase with file count info */
 void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan);
 
-/* Update scanning progress (files found so far, bytes processed/skipped) */
-void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uint64_t bytes_processed);
+/* Update scanning progress (files found so far, bytes processed/skipped, files skipped count, total bytes found) */
+void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uint64_t bytes_processed, int files_skipped, uint64_t total_bytes_found);
 
 /* Mark scanning complete with summary */
 void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int files_to_copy);

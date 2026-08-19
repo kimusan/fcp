@@ -25,3 +25,6 @@ Thumbs.db
 
 # Implementation plan (not tracked in git)
 IMPLEMENTATION_PLAN.md
+
+# Debug binaries
+fcp_asan

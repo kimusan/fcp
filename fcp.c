@@ -613,14 +613,26 @@ int main(int argc, char *argv[]) {
         }
     } else {
         /* For single file, just copy directly */
+        /* If destination is a directory, append source basename */
+        char *final_dst = NULL;
+        if (path_is_dir(dst)) {
+            const char *basename = strrchr(src, '/');
+            basename = basename ? basename + 1 : src;
+            final_dst = malloc(strlen(dst) + strlen(basename) + 2);
+            sprintf(final_dst, "%s/%s", dst, basename);
+        } else {
+            final_dst = strdup(dst);
+        }
+
         struct stat st;
         if (stat(src, &st) == 0) {
             if (g_num_workers > 1) {
-                fcp_queue_push(&g_queue, src, dst, st.st_size);
+                fcp_queue_push(&g_queue, src, final_dst, st.st_size);
             } else {
-                copy_single_file(src, dst);
+                copy_single_file(src, final_dst);
             }
         }
+        free(final_dst);
     }
 
     /* Mark queue as done and wait for workers */

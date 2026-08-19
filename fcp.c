@@ -390,7 +390,7 @@ int main(int argc, char *argv[]) {
         fcp_config_load(&g_config, config_path);
     }
 
-    while ((opt = getopt_long(argc, argv, "riIffvdst:PR", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "riIffvdst:PRh", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'r':
                 opt_recursive = 1;

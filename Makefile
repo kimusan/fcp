@@ -28,6 +28,6 @@ clean:
 	rm -f $(TARGET)
 
 deb:
-	dpkg-buildpackage -us -uc -b
+	dpkg-buildpackage -us -uc -b -d
 
 .PHONY: all install clean deb

@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <fnmatch.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/stat.h>
@@ -41,6 +42,11 @@ static int opt_no_progress = 0;
 static int opt_no_color = 0;
 static int opt_verify_hash = 0;
 static char *opt_target_dir = NULL;
+
+/* Exclude patterns */
+#define FCP_MAX_EXCLUDES 64
+static char *opt_excludes[FCP_MAX_EXCLUDES];
+static int opt_num_excludes = 0;
 
 /* Progress state */
 static fcp_progress_t g_progress;
@@ -82,6 +88,7 @@ static const struct option long_options[] = {
     {"config",         required_argument, NULL, 1011},
     {"help",           0, NULL, 1012},
     {"version",        0, NULL, 1013},
+    {"exclude",        required_argument, NULL, 1014},
     {NULL, 0, NULL, 0}
 };
 
@@ -111,6 +118,7 @@ static void print_usage(FILE *fp) {
         "  -P, --progress           Show progress bar (default: auto)\n"
         "      --no-progress        Disable progress display\n"
         "      --parallel=[N|auto]  Number of parallel copy workers (default: auto)\n"
+        "      --exclude=PATTERN  Exclude files matching PATTERN (glob)\n"
         "      --verify-hash        Use SHA256 for identical file detection\n"
         "      --reflink=MODE       Use reflink when supported (auto|always|never)\n"
         "      --dry-run            Preview without copying\n"
@@ -248,6 +256,17 @@ static void *worker_thread(void *arg) {
     return NULL;
 }
 
+/* Check if a filename matches any exclude pattern */
+static int is_excluded(const char *name) {
+    if (opt_num_excludes == 0) return 0;
+    for (int i = 0; i < opt_num_excludes; i++) {
+        if (fnmatch(opt_excludes[i], name, FNM_PERIOD) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Recursively copy a directory (populates queue) */
 static int copy_directory(const char *src, const char *dst) {
     struct dirent *de;
@@ -283,6 +302,11 @@ static int copy_directory(const char *src, const char *dst) {
     while ((de = readdir(dir)) != NULL) {
         /* Skip . and .. */
         if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+            continue;
+        }
+
+        /* Skip excluded patterns */
+        if (is_excluded(de->d_name)) {
             continue;
         }
 
@@ -473,6 +497,11 @@ int main(int argc, char *argv[]) {
             case 1013: /* --version */
                 print_version();
                 return 0;
+            case 1014: /* --exclude */
+                if (opt_num_excludes < FCP_MAX_EXCLUDES) {
+                    opt_excludes[opt_num_excludes++] = optarg;
+                }
+                break;
             default:
                 print_usage(stderr);
                 return 1;

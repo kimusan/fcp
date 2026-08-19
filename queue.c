@@ -48,17 +48,11 @@ int fcp_queue_push(fcp_queue_t *queue, const char *src, const char *dst, uint64_
         }
 
         int new_capacity = queue->capacity * 2;
-        fcp_queue_item_t *new_items = realloc(queue->items, sizeof(fcp_queue_item_t) * new_capacity);
-        if (!new_items) {
-            pthread_mutex_unlock(&queue->mutex);
-            perror("fcp: realloc");
-            return -1;
-        }
+        fcp_queue_item_t *old_items = queue->items;
 
-        /* Rebuild array to handle circular buffer */
-        fcp_queue_item_t *temp = malloc(sizeof(fcp_queue_item_t) * new_capacity);
-        if (!temp) {
-            free(new_items);
+        /* Allocate new array and copy items (avoids realloc use-after-free) */
+        fcp_queue_item_t *new_items = malloc(sizeof(fcp_queue_item_t) * new_capacity);
+        if (!new_items) {
             pthread_mutex_unlock(&queue->mutex);
             perror("fcp: malloc");
             return -1;
@@ -66,14 +60,11 @@ int fcp_queue_push(fcp_queue_t *queue, const char *src, const char *dst, uint64_
 
         for (int i = 0; i < queue->count; i++) {
             int idx = (queue->head + i) % queue->capacity;
-            temp[i] = queue->items[idx];
+            new_items[i] = old_items[idx];
         }
 
-        free(queue->items);
+        free(old_items);
         queue->items = new_items;
-        memcpy(queue->items, temp, sizeof(fcp_queue_item_t) * queue->count);
-        free(temp);
-
         queue->capacity = new_capacity;
         queue->head = 0;
         queue->tail = queue->count;
@@ -113,8 +104,10 @@ int fcp_queue_pop(fcp_queue_t *queue, fcp_queue_item_t *item) {
         return -1; /* Queue is empty and done */
     }
 
-    /* Remove item */
+    /* Copy item and free the queue's copy of the strings (worker will free them later) */
     *item = queue->items[queue->head];
+    queue->items[queue->head].src = NULL;
+    queue->items[queue->head].dst = NULL;
     queue->head = (queue->head + 1) % queue->capacity;
     queue->count--;
 
@@ -141,8 +134,8 @@ bool fcp_queue_is_empty(fcp_queue_t *queue) {
 void fcp_queue_cleanup(fcp_queue_t *queue) {
     for (int i = 0; i < queue->count; i++) {
         int idx = (queue->head + i) % queue->capacity;
-        free(queue->items[idx].src);
-        free(queue->items[idx].dst);
+        free(queue->items[idx].src);  /* May be NULL if already popped */
+        free(queue->items[idx].dst);  /* May be NULL if already popped */
     }
     free(queue->items);
 

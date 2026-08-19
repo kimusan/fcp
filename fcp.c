@@ -304,6 +304,8 @@ static int copy_directory(const char *src, const char *dst) {
         g_bytes_total += st.st_size;
         if (g_progress.enabled && g_progress.phase == FCP_PHASE_SCANNING) {
             fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped, g_files_skipped, g_bytes_total);
+            /* Render scanning progress from main thread */
+            fcp_progress_render(&g_progress);
         }
 
         if (S_ISDIR(st.st_mode)) {

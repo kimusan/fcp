@@ -140,12 +140,31 @@ void fcp_progress_render(fcp_progress_t *progress) {
 
     double elapsed = now - progress->start_time;
 
-    /* Scanning phase: show file count and skipped count */
+    /* Scanning phase: show progress bar with skipped files counting as progress */
     if (progress->phase == FCP_PHASE_SCANNING) {
-        /* Clear line and show scanning info */
+        double pct = 0;
+        if (progress->total_all > 0) {
+            pct = 100.0 * (double)progress->total_done / (double)progress->total_all;
+        }
+
+        int filled = (int)(PROGRESS_BAR_WIDTH * pct / 100.0);
+        char bar[PROGRESS_BAR_WIDTH + 1];
+        for (int i = 0; i < PROGRESS_BAR_WIDTH; i++) {
+            bar[i] = (i < filled) ? '=' : ' ';
+        }
+        bar[PROGRESS_BAR_WIDTH] = '\0';
+
+        /* Clear line and show scanning info with progress bar */
         fprintf(stderr, "\r\033[K" COLOR_BOLD "  Scanning..." COLOR_RESET
                 " %d files" COLOR_GRAY", %d identical" COLOR_RESET,
                 progress->files_scanned, progress->files_skipped_identical);
+        if (progress->total_all > 0) {
+            fprintf(stderr, " " COLOR_GREEN "[%s]" COLOR_RESET " %5.1f%%",
+                    bar, pct);
+            fprintf(stderr, " " COLOR_CYAN "%s" COLOR_RESET, format_size(progress->total_done));
+            fprintf(stderr, COLOR_GRAY "/" COLOR_RESET);
+            fprintf(stderr, COLOR_CYAN "%s" COLOR_RESET, format_size(progress->total_all));
+        }
         fflush(stderr);
         return;
     }

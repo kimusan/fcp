@@ -611,10 +611,11 @@ int main(int argc, char *argv[]) {
     }
 
     /* Standard: source(s) destination */
+    /* The last non-option argument is always the destination */
+    const char *dst = argv[argc - 1];
     const char *src = argv[optind];
-    const char *dst = argv[optind + 1];
 
-    if (optind + 2 < argc) {
+    if (optind + 1 < argc) {
         /* Multiple sources - destination must be directory */
         struct stat dst_stat;
         if (stat(dst, &dst_stat) != 0 || !S_ISDIR(dst_stat.st_mode)) {

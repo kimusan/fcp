@@ -54,6 +54,8 @@ static int g_num_workers = 0;
 static int g_files_scanned = 0;
 static int g_files_to_copy = 0;
 static int g_files_skipped = 0;
+static uint64_t g_bytes_skipped = 0;
+static uint64_t g_bytes_total = 0;
 
 /* Configuration */
 static fcp_config_t g_config;
@@ -205,6 +207,15 @@ static void *worker_thread(void *arg) {
         /* Check identical before copying */
         int identical = fcp_check_identical(item.src, item.dst, opt_verify_hash);
         if (identical == FCP_IDENTICAL_YES) {
+            g_files_skipped++;
+            g_bytes_skipped += item.size;
+            /* Count skipped files in progress (they're "instantly copied") */
+            if (g_progress.enabled) {
+                g_progress.total_all += item.size;
+                g_progress.total_done += item.size;
+            }
+            /* Update scanning progress to show skipped files */
+            fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped);
             if (opt_verbose) {
                 fprintf(stderr, "fcp: skipped identical '%s'\n", item.src);
             }
@@ -223,6 +234,7 @@ static void *worker_thread(void *arg) {
                                opt_speed_limit, &g_progress);
 
         if (ret == FCP_COPY_OK) {
+            g_files_to_copy++;
             fcp_progress_complete_file(&g_progress);
             if (opt_verbose) {
                 fprintf(stderr, "fcp: copied '%s' -> '%s'\n", item.src, item.dst);
@@ -257,10 +269,14 @@ static int copy_directory(const char *src, const char *dst) {
         dst_len--;
     }
 
-    /* Ensure destination exists */
+    /* Ensure destination exists (skip if dst already exists as directory) */
     if (mkdir(clean_dst, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, "fcp: cannot create directory '%s': %s\n", clean_dst, strerror(errno));
-        return -1;
+        /* If it's an existing directory, that's fine */
+        struct stat st;
+        if (stat(clean_dst, &st) != 0 || !S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "fcp: cannot create directory '%s': %s\n", clean_dst, strerror(errno));
+            return -1;
+        }
     }
 
     dir = opendir(src);
@@ -290,8 +306,11 @@ static int copy_directory(const char *src, const char *dst) {
         }
 
         g_files_scanned++;
+        g_bytes_total += st.st_size;
         if (g_progress.enabled && g_progress.phase == FCP_PHASE_SCANNING) {
-            fcp_progress_update_scanning(&g_progress, g_files_scanned);
+            fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped);
+            /* Render progress during scanning */
+            fcp_progress_render(&g_progress);
         }
 
         if (S_ISDIR(st.st_mode)) {
@@ -301,6 +320,14 @@ static int copy_directory(const char *src, const char *dst) {
             int identical = fcp_check_identical(src_path, dst_path, opt_verify_hash);
             if (identical == FCP_IDENTICAL_YES) {
                 g_files_skipped++;
+                g_bytes_skipped += st.st_size;
+                /* Count skipped files in progress (they're "instantly copied") */
+                if (g_progress.enabled) {
+                    g_progress.total_all += st.st_size;
+                    g_progress.total_done += st.st_size;
+                }
+                /* Update scanning progress to show skipped files */
+                fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped);
                 if (opt_verbose) {
                     fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
                 }
@@ -413,6 +440,7 @@ int main(int argc, char *argv[]) {
                 opt_parallel = atoi(optarg);
                 break;
             case 1006: /* --verify-hash */
+                opt_verify_hash = 1;
                 break;
             case 1007: /* --reflink */
                 if (strcmp(optarg, "auto") == 0) {
@@ -529,6 +557,8 @@ int main(int argc, char *argv[]) {
             g_files_scanned = 0;
             g_files_to_copy = 0;
             g_files_skipped = 0;
+            g_bytes_skipped = 0;
+            g_bytes_total = 0;
             fcp_progress_set_scanning(&g_progress, 0);
         }
 
@@ -605,10 +635,14 @@ int main(int argc, char *argv[]) {
             g_files_scanned = 0;
             g_files_to_copy = 0;
             g_files_skipped = 0;
+            g_bytes_skipped = 0;
+            g_bytes_total = 0;
             fcp_progress_set_scanning(&g_progress, 0);
         }
         copy_directory(src, dst);
         if (g_progress.enabled) {
+            /* Set total_all to total bytes found (skipped + to copy) so progress bar shows full work */
+            g_progress.total_all = g_bytes_total;
             fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
         }
     } else {

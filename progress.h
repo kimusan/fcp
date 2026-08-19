@@ -39,6 +39,7 @@ typedef struct fcp_progress_s {
     /* Overall stats */
     uint64_t total_done;
     uint64_t total_all;
+    uint64_t total_bytes;  /* Total bytes found during scanning (all files, including identical) */
     double start_time;
     double last_update_time;
 
@@ -53,8 +54,8 @@ void fcp_progress_init(fcp_progress_t *progress, bool enabled);
 /* Set scanning phase with file count info */
 void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan);
 
-/* Update scanning progress (files found so far) */
-void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found);
+/* Update scanning progress (files found so far, bytes processed/skipped) */
+void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uint64_t bytes_processed);
 
 /* Mark scanning complete with summary */
 void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int files_to_copy);

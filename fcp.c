@@ -1,0 +1,578 @@
+/*
+ * fcp - Faster CP
+ * Copyright (c) 2026 Kim Schulz <kim@schulz.dk>
+ * MIT License
+ */
+
+#define _GNU_SOURCE
+
+#include "util.h"
+#include "copy.h"
+#include "identical.h"
+#include "progress.h"
+#include "colors.h"
+#include "queue.h"
+#include "config.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <getopt.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <libgen.h>
+
+#define FCP_VERSION "1.0.0"
+
+/* Global options */
+static int opt_recursive = 0;
+static int opt_interactive = 0;
+static int opt_force = 0;
+static int opt_verbose = 0;
+static int opt_dereference = 0;
+static int opt_dry_run = 0;
+static int opt_parallel = 0;
+static int opt_reflink = FCP_REFLINK_AUTO;
+static uint64_t opt_speed_limit = 0;
+static int opt_no_progress = 0;
+static int opt_no_color = 0;
+static int opt_verify_hash = 0;
+static char *opt_target_dir = NULL;
+
+/* Progress state */
+static fcp_progress_t g_progress;
+
+/* Queue and workers */
+static fcp_queue_t g_queue;
+static pthread_t *g_workers = NULL;
+static int g_num_workers = 0;
+
+/* Configuration */
+static fcp_config_t g_config;
+
+static const struct option long_options[] = {
+    {"recursive",      'r', NULL, 'r'},
+    {"remove-destination", 'R', NULL, 'R'},
+    {"interactive",    'i', NULL, 'i'},
+    {"no-clobber",     'n', NULL, 'n'},
+    {"force",          'f', NULL, 'f'},
+    {"verbose",        'v', NULL, 'v'},
+    {"dereference",    'd', NULL, 'd'},
+    {"symbolic",       's', NULL, 's'},
+    {"update",         'u', NULL, 'u'},
+    {"target-directory", 't', NULL, 't'},
+    {"progress",       'P', NULL, 1003},
+    {"no-progress",    0, NULL, 1004},
+    {"parallel",       required_argument, NULL, 1005},
+    {"verify-hash",    0, NULL, 1006},
+    {"reflink",        required_argument, NULL, 1007},
+    {"dry-run",        'n', NULL, 1008},
+    {"speed-limit",    required_argument, NULL, 1009},
+    {"no-color",       0, NULL, 1010},
+    {"config",         required_argument, NULL, 1011},
+    {"help",           0, NULL, 1012},
+    {"version",        0, NULL, 1013},
+    {NULL, 0, NULL, 0}
+};
+
+static void print_version(void) {
+    printf("fcp %s\n", FCP_VERSION);
+}
+
+static void print_usage(FILE *fp) {
+    fprintf(fp,
+        "Usage: fcp [OPTION]... SOURCE DESTINATION\n"
+        "       fcp [OPTION]... SOURCE... DIRECTORY\n"
+        "\n"
+        "fcp - Faster CP with progress, identical file detection, and parallelism\n"
+        "\n"
+        "Basic options:\n"
+        "  -r, --recursive          Copy directories recursively\n"
+        "  -i, --interactive        Prompt before overwrite\n"
+        "  -n, --no-clobber         Do not overwrite an existing file\n"
+        "  -f, --force              Remove existing destination first\n"
+        "  -v, --verbose            Display names of copied files\n"
+        "  -d, --dereference        Copy files that symlinks refer to\n"
+        "  -s, --symbolic           Create symlinks instead of copying\n"
+        "  -u, --update             Copy only when source is newer\n"
+        "  -t, --target-directory   Copy all sources into DIRECTORY\n"
+        "\n"
+        "fcp-specific options:\n"
+        "  -P, --progress           Show progress bar (default: auto)\n"
+        "      --no-progress        Disable progress display\n"
+        "      --parallel=[N|auto]  Number of parallel copy workers (default: auto)\n"
+        "      --verify-hash        Use SHA256 for identical file detection\n"
+        "      --reflink=MODE       Use reflink when supported (auto|always|never)\n"
+        "      --dry-run            Preview without copying\n"
+        "      --speed-limit=SIZE   Cap copy speed (e.g., 10M, 1G)\n"
+        "      --no-color           Disable colored output\n"
+        "  -h, --help               Show this help message\n"
+        "      --version            Show version information\n"
+        "\n"
+        "Examples:\n"
+        "  fcp source.txt destination.txt          Copy a file\n"
+        "  fcp -r source_dir/ destination_dir/     Copy directory recursively\n"
+        "  fcp --parallel=4 --progress file1 file2 dest/  Parallel copy with progress\n"
+        "  fcp --dry-run -r dir1/ dir2/            Preview what would be copied\n"
+        "  fcp --speed-limit=50M large_file.bin    Copy with 50MB/s speed limit\n"
+        "\n"
+        "Report bugs to: kim@schulz.dk\n"
+    );
+}
+
+/* Handle overwrite policy and identical file detection for a single file */
+static int handle_overwrite(const char *src, const char *dst) {
+    struct stat dst_stat;
+
+    if (stat(dst, &dst_stat) == 0) {
+        /* Destination exists - check if files are identical */
+        int identical = fcp_check_identical(src, dst, opt_verify_hash);
+
+        if (identical == FCP_IDENTICAL_YES) {
+            if (opt_verbose) {
+                fprintf(stderr, "fcp: skipped identical '%s'\n", src);
+            }
+            return 0; /* Skip - files are identical */
+        }
+
+        if (identical == FCP_IDENTICAL_UNKNOWN) {
+            /* Need hash comparison - we'll let fcp_copy_file handle it */
+        }
+
+        /* --no-clobber: skip if dest exists (even if different) */
+        if (!opt_force) {
+            if (opt_verbose) {
+                fprintf(stderr, "fcp: skipped '%s' (file exists)\n", dst);
+            }
+            return 0;
+        }
+
+        /* --force: remove destination */
+        if (unlink(dst) != 0) {
+            fprintf(stderr, "fcp: cannot remove '%s': %s\n", dst, strerror(errno));
+            return -1;
+        }
+    }
+
+    return 1;
+}
+
+/* Copy a single file */
+static int copy_single_file(const char *src, const char *dst) {
+    int allow = handle_overwrite(src, dst);
+    if (allow < 0) return -1;
+    if (allow == 0) return 0;
+
+    /* Get file size for progress */
+    struct stat st;
+    uint64_t file_size = 0;
+    if (stat(src, &st) == 0) {
+        file_size = st.st_size;
+        fcp_progress_update_file(&g_progress, dst, file_size);
+    }
+
+    int ret = fcp_copy_file(src, dst, opt_reflink, opt_dry_run, opt_speed_limit, &g_progress);
+
+    if (ret == FCP_COPY_OK) {
+        fcp_progress_complete_file(&g_progress);
+        if (opt_verbose) {
+            fprintf(stderr, "fcp: copied '%s' -> '%s'\n", src, dst);
+        }
+    } else if (ret == FCP_COPY_SKIP) {
+        fcp_progress_complete_file(&g_progress);
+        if (opt_verbose) {
+            fprintf(stderr, "fcp: skipped identical '%s'\n", src);
+        }
+    }
+
+    return (ret == FCP_COPY_OK) ? 0 : (ret == FCP_COPY_SKIP) ? 0 : -1;
+}
+
+/* Worker thread function */
+static void *worker_thread(void *arg) {
+    (void)arg;
+    fcp_queue_item_t item;
+
+    while (fcp_queue_pop(&g_queue, &item) == 0) {
+        /* Check identical before copying */
+        int identical = fcp_check_identical(item.src, item.dst, opt_verify_hash);
+        if (identical == FCP_IDENTICAL_YES) {
+            if (opt_verbose) {
+                fprintf(stderr, "fcp: skipped identical '%s'\n", item.src);
+            }
+            free(item.src);
+            free(item.dst);
+            continue;
+        }
+
+        /* Update progress */
+        if (g_progress.enabled) {
+            fcp_progress_update_file(&g_progress, item.dst, item.size);
+        }
+
+        /* Copy file */
+        int ret = fcp_copy_file(item.src, item.dst, opt_reflink, opt_dry_run,
+                               opt_speed_limit, &g_progress);
+
+        if (ret == FCP_COPY_OK) {
+            fcp_progress_complete_file(&g_progress);
+            if (opt_verbose) {
+                fprintf(stderr, "fcp: copied '%s' -> '%s'\n", item.src, item.dst);
+            }
+        } else if (ret == FCP_COPY_SKIP) {
+            fcp_progress_complete_file(&g_progress);
+            if (opt_verbose) {
+                fprintf(stderr, "fcp: skipped identical '%s'\n", item.src);
+            }
+        }
+
+        free(item.src);
+        free(item.dst);
+    }
+
+    return NULL;
+}
+
+/* Recursively copy a directory (populates queue) */
+static int copy_directory(const char *src, const char *dst) {
+    struct dirent *de;
+    DIR *dir;
+    char *src_path, *dst_path;
+    char clean_dst[1024];
+
+    /* Strip trailing slash from dst */
+    strncpy(clean_dst, dst, sizeof(clean_dst) - 1);
+    clean_dst[sizeof(clean_dst) - 1] = '\0';
+    size_t dst_len = strlen(clean_dst);
+    while (dst_len > 1 && clean_dst[dst_len - 1] == '/') {
+        clean_dst[dst_len - 1] = '\0';
+        dst_len--;
+    }
+
+    /* Ensure destination exists */
+    if (mkdir(clean_dst, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "fcp: cannot create directory '%s': %s\n", clean_dst, strerror(errno));
+        return -1;
+    }
+
+    dir = opendir(src);
+    if (!dir) {
+        fprintf(stderr, "fcp: cannot open directory '%s': %s\n", src, strerror(errno));
+        return -1;
+    }
+
+    while ((de = readdir(dir)) != NULL) {
+        /* Skip . and .. */
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
+            continue;
+        }
+
+        src_path = malloc(strlen(src) + strlen(de->d_name) + 2);
+        sprintf(src_path, "%s/%s", src, de->d_name);
+
+        dst_path = malloc(strlen(clean_dst) + strlen(de->d_name) + 2);
+        sprintf(dst_path, "%s/%s", clean_dst, de->d_name);
+
+        struct stat st;
+        if (lstat(src_path, &st) != 0) {
+            fprintf(stderr, "fcp: cannot stat '%s': %s\n", src_path, strerror(errno));
+            free(src_path);
+            free(dst_path);
+            continue;
+        }
+
+        if (S_ISDIR(st.st_mode)) {
+            copy_directory(src_path, dst_path);
+        } else if (S_ISREG(st.st_mode)) {
+            /* Add to queue for parallel copying */
+            if (opt_parallel > 1) {
+                fcp_queue_push(&g_queue, src_path, dst_path, st.st_size);
+            } else {
+                /* Sequential: copy directly */
+                int identical = fcp_check_identical(src_path, dst_path, opt_verify_hash);
+                if (identical == FCP_IDENTICAL_YES) {
+                    if (opt_verbose) {
+                        fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
+                    }
+                } else {
+                    if (g_progress.enabled) {
+                        fcp_progress_update_file(&g_progress, dst_path, st.st_size);
+                    }
+
+                    int ret = fcp_copy_file(src_path, dst_path, opt_reflink, opt_dry_run,
+                                           opt_speed_limit, &g_progress);
+
+                    if (ret == FCP_COPY_OK) {
+                        fcp_progress_complete_file(&g_progress);
+                        if (opt_verbose) {
+                            fprintf(stderr, "fcp: copied '%s' -> '%s'\n", src_path, dst_path);
+                        }
+                    } else if (ret == FCP_COPY_SKIP) {
+                        fcp_progress_complete_file(&g_progress);
+                        if (opt_verbose) {
+                            fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
+                        }
+                    }
+                }
+            }
+        } else if (S_ISLNK(st.st_mode) && opt_dereference) {
+            char resolved[1024];
+            ssize_t rlen = readlink(src_path, resolved, sizeof(resolved) - 1);
+            if (rlen >= 0) {
+                resolved[rlen] = '\0';
+                struct stat res_stat;
+                if (lstat(resolved, &res_stat) == 0) {
+                    if (S_ISDIR(res_stat.st_mode)) {
+                        copy_directory(resolved, dst_path);
+                    } else if (S_ISREG(res_stat.st_mode)) {
+                        fcp_queue_push(&g_queue, resolved, dst_path, res_stat.st_size);
+                    }
+                }
+            }
+        }
+
+        free(src_path);
+        free(dst_path);
+    }
+
+    closedir(dir);
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    int opt;
+    int option_index = 0;
+
+    /* Load config file */
+    fcp_config_defaults(&g_config);
+    const char *home = getenv("HOME");
+    if (home) {
+        char config_path[2048];
+        snprintf(config_path, sizeof(config_path), "%s/.config/fcp/config", home);
+        fcp_config_load(&g_config, config_path);
+    }
+
+    while ((opt = getopt_long(argc, argv, "riIffvdst:PR", long_options, &option_index)) != -1) {
+        switch (opt) {
+            case 'r':
+                opt_recursive = 1;
+                break;
+            case 'R':
+                opt_force = 1;
+                break;
+            case 'i':
+                opt_interactive = 1;
+                break;
+            case 'n':
+                /* No-clobber or dry-run (we'll handle this later) */
+                break;
+            case 'f':
+                opt_force = 1;
+                break;
+            case 'v':
+                opt_verbose = 1;
+                break;
+            case 'd':
+                opt_dereference = 1;
+                break;
+            case 's':
+                opt_dereference = 1;
+                break;
+            case 'u':
+                /* Update mode (not implemented in v1) */
+                break;
+            case 't':
+                opt_target_dir = optarg;
+                break;
+            case 'P':
+                opt_no_progress = 0;
+                break;
+            case 1003: /* --progress */
+                opt_no_progress = 0;
+                break;
+            case 1004: /* --no-progress */
+                opt_no_progress = 1;
+                break;
+            case 1005: /* --parallel */
+                opt_parallel = atoi(optarg);
+                break;
+            case 1006: /* --verify-hash */
+                break;
+            case 1007: /* --reflink */
+                if (strcmp(optarg, "auto") == 0) {
+                    opt_reflink = FCP_REFLINK_AUTO;
+                } else if (strcmp(optarg, "always") == 0) {
+                    opt_reflink = FCP_REFLINK_ALWAYS;
+                } else if (strcmp(optarg, "never") == 0) {
+                    opt_reflink = FCP_REFLINK_OFF;
+                } else {
+                    fprintf(stderr, "fcp: invalid reflink mode '%s'\n", optarg);
+                    return 1;
+                }
+                break;
+            case 1008: /* --dry-run */
+                opt_dry_run = 1;
+                break;
+            case 1009: /* --speed-limit */
+                if (parse_size(optarg, &opt_speed_limit) != 0) {
+                    fprintf(stderr, "fcp: invalid speed limit '%s'\n", optarg);
+                    return 1;
+                }
+                break;
+            case 1010: /* --no-color */
+                opt_no_color = 1;
+                break;
+            case 1011: /* --config */
+                fcp_config_load(&g_config, optarg);
+                break;
+            case 'h':
+                print_usage(stdout);
+                return 0;
+            case 1012: /* --help */
+                print_usage(stdout);
+                return 0;
+            case 1013: /* --version */
+                print_version();
+                return 0;
+            default:
+                print_usage(stderr);
+                return 1;
+        }
+    }
+
+    if (optind >= argc) {
+        fprintf(stderr, "fcp: missing file operand\n");
+        print_usage(stderr);
+        return 1;
+    }
+
+    /* Need at least 2 arguments for source and destination */
+    if (optind + 1 >= argc && !opt_target_dir) {
+        if (!opt_recursive) {
+            fprintf(stderr, "fcp: missing destination operand\n");
+            print_usage(stderr);
+            return 1;
+        }
+    }
+
+    /* Initialize progress */
+    bool progress_enabled = !opt_no_progress && (!opt_dry_run || opt_verbose);
+    fcp_progress_init(&g_progress, progress_enabled);
+
+    /* Determine number of workers */
+    if (opt_parallel == 0) {
+        /* Auto: use nproc, capped at 8 */
+        g_num_workers = get_num_cores();
+        if (g_num_workers > 8) g_num_workers = 8;
+        if (g_num_workers < 1) g_num_workers = 1;
+    } else if (opt_parallel == 1) {
+        g_num_workers = 1;
+    } else {
+        g_num_workers = opt_parallel;
+    }
+
+    /* Initialize queue and worker threads */
+    fcp_queue_init(&g_queue, g_num_workers * 4);
+
+    if (g_num_workers > 1) {
+        g_workers = malloc(sizeof(pthread_t) * g_num_workers);
+        if (!g_workers) {
+            perror("fcp: malloc");
+            return 1;
+        }
+
+        for (int i = 0; i < g_num_workers; i++) {
+            if (pthread_create(&g_workers[i], NULL, worker_thread, NULL) != 0) {
+                perror("fcp: pthread_create");
+                return 1;
+            }
+        }
+    }
+
+    /* If target directory specified, copy all sources into it */
+    if (opt_target_dir) {
+        struct stat target_stat;
+        if (stat(opt_target_dir, &target_stat) != 0 || !S_ISDIR(target_stat.st_mode)) {
+            fprintf(stderr, "fcp: '%s' is not a directory\n", opt_target_dir);
+            return 1;
+        }
+
+        for (int i = optind; i < argc; i++) {
+            char *dst = malloc(strlen(opt_target_dir) + strlen(argv[i]) + 2);
+            const char *basename = strrchr(argv[i], '/');
+            basename = basename ? basename + 1 : argv[i];
+            sprintf(dst, "%s/%s", opt_target_dir, basename);
+
+            if (opt_recursive && path_is_dir(argv[i])) {
+                copy_directory(argv[i], dst);
+            } else {
+                copy_single_file(argv[i], dst);
+            }
+
+            free(dst);
+        }
+        return 0;
+    }
+
+    /* Standard: source(s) destination */
+    const char *src = argv[optind];
+    const char *dst = argv[optind + 1];
+
+    if (optind + 2 < argc) {
+        /* Multiple sources - destination must be directory */
+        struct stat dst_stat;
+        if (stat(dst, &dst_stat) != 0 || !S_ISDIR(dst_stat.st_mode)) {
+            fprintf(stderr, "fcp: target '%s' is not a directory\n", dst);
+            return 1;
+        }
+
+        for (int i = optind; i < argc - 1; i++) {
+            char *full_dst = malloc(strlen(dst) + strlen(argv[i]) + 2);
+            const char *basename = strrchr(argv[i], '/');
+            basename = basename ? basename + 1 : argv[i];
+            sprintf(full_dst, "%s/%s", dst, basename);
+
+            if (opt_recursive && path_is_dir(argv[i])) {
+                copy_directory(argv[i], full_dst);
+            } else {
+                copy_single_file(argv[i], full_dst);
+            }
+
+            free(full_dst);
+        }
+        return 0;
+    }
+
+    /* Single source, single destination */
+    if (opt_recursive && path_is_dir(src)) {
+        copy_directory(src, dst);
+    } else {
+        /* For single file, just copy directly */
+        struct stat st;
+        if (stat(src, &st) == 0) {
+            if (g_num_workers > 1) {
+                fcp_queue_push(&g_queue, src, dst, st.st_size);
+            } else {
+                copy_single_file(src, dst);
+            }
+        }
+    }
+
+    /* Mark queue as done and wait for workers */
+    if (g_num_workers > 1) {
+        fcp_queue_mark_done(&g_queue);
+        for (int i = 0; i < g_num_workers; i++) {
+            pthread_join(g_workers[i], NULL);
+        }
+        free(g_workers);
+    }
+
+    /* Cleanup progress */
+    fcp_progress_cleanup(&g_progress);
+    fcp_queue_cleanup(&g_queue);
+
+    return 0;
+}

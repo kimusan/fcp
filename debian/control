@@ -1,0 +1,24 @@
+Source: fcp
+Section: utils
+Priority: optional
+Maintainer: Kim Schulz <kim@schulz.dk>
+Build-Depends: debhelper (>= 13), libssl-dev
+Standards-Version: 4.6.0
+Rules-Requires-Root: no
+
+Package: fcp
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Faster CP with progress, identical file detection, and parallelism
+ fcp is a faster replacement for the standard cp command with enhanced
+ features including:
+  * Visual progress bar with ETA and speed estimation
+  * Identical file detection (rsync-style: size+mtime + optional SHA256)
+  * Parallel copy support with configurable worker count
+  * Reflink support for instant copies on Btrfs/XFS
+  * Speed limiting with --speed-limit
+  * Dry-run mode for previewing copies
+  * Colored output for better visibility
+ .
+ fcp is fully compatible with cp's command-line interface and adds
+ several new options for improved functionality.

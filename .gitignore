@@ -1,0 +1,27 @@
+# Build artifacts
+fcp
+*.o
+
+# Debian package build artifacts
+*.deb
+*.dsc
+*.tar.*
+debian/files
+debian/*.debhelper
+debian/stampit*
+debian/substvars*
+debian/fcp.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Implementation plan (not tracked in git)
+IMPLEMENTATION_PLAN.md

@@ -1,0 +1,257 @@
+.TH FCP 1 "August 2026" "fcp 1.0.0" "User Commands"
+.SH NAME
+fcp \- faster copy with progress, identical file detection, and parallelism
+.SH SYNOPSIS
+.B fcp
+[\fIOPTION\fR]... \fISOURCE\fR \fIDESTINATION\fR
+.br
+.B fcp
+[\fIOPTION\fR]... \fISOURCE\fR... \fIDIRECTORY\fR
+.SH DESCRIPTION
+\fBfcp\fP is a faster replacement for the standard \fBcp\fP command with
+enhanced features including visual progress bars, identical file detection,
+parallel copy support, and more.
+
+It is fully compatible with \fBcp\fP's command-line interface and adds
+several new options for improved functionality.
+
+.SH OPTIONS
+.TP
+\fB\-r\fR, \fB\-\-recursive\fR
+Copy directories recursively.
+
+.TP
+\fB\-i\fR, \fB\-\-interactive\fR
+Prompt before overwrite.
+
+.TP
+\fB\-n\fR, \fB\-\-no\-clobber\fR
+Do not overwrite an existing file.
+
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Remove existing destination files before copying.
+
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Display names of copied files.
+
+.TP
+\fB\-d\fR, \fB\-\-dereference\fR
+Copy the files that symlinks refer to, not the symlinks themselves.
+
+.TP
+\fB\-s\fR, \fB\-\-symbolic\fR
+Create symbolic links instead of copying files.
+
+.TP
+\fB\-u\fR, \fB\-\-update\fR
+Copy only when the source file is newer than the destination file.
+
+.TP
+\fB\-t\fR \fIDIRECTORY\fR, \fB\-\-target\-directory=\fIDIRECTORY\fR
+Copy all sources into the specified DIRECTORY.
+
+.TP
+\fB\-P\fR, \fB\-\-progress\fR
+Show progress bar during copy operations. Enabled by default when
+outputting to a terminal.
+
+.TP
+\fB\-\-no\-progress\fR
+Disable progress display.
+
+.TP
+\fB\-\-parallel=\fI[N|auto]\fR
+Number of parallel copy workers.
+.RS 4
+.PP
+\fBauto\fR (default): Automatically determine the number of workers
+based on CPU count, capped at 8.
+.PP
+\fB1\fR: Sequential copy (traditional cp behavior).
+.PP
+\fIN\fR: Use exactly N worker threads.
+.RE
+
+.TP
+\fB\-\-verify\-hash\fR
+Use SHA256 hash comparison for identical file detection. By default,
+fcp uses file size and modification time for fast detection. Enable
+this option for cryptographically certain identical file detection.
+
+.TP
+\fB\-\-reflink=\fI[auto|always|never]\fR
+Use reflink (FICLONE) when the filesystem supports it for instant
+zero\-copy.
+.RS 4
+.PP
+\fBauto\fR (default): Use reflink when supported, fall back to normal copy.
+.PP
+\fBalways\fR: Always attempt reflink (will fail on unsupported filesystems).
+.PP
+\fBnever\fR: Never use reflink.
+.RE
+
+.TP
+\fB\-\-dry\-run\fR
+Preview what would be copied without actually copying anything.
+Shows the files that would be processed.
+
+.TP
+\fB\-\-speed\-limit=\fISIZE\fR
+Cap the copy speed. SIZE can be a number with optional suffix:
+.RS 4
+.PP
+\fBK\fR or \fBk\fR: Kilobytes (1024 bytes)
+.PP
+\fBM\fR or \fBm\fR: Megabytes (1024*1024 bytes)
+.PP
+\fBG\fR or \fBg\fR: Gigabytes (1024*1024*1024 bytes)
+.PP
+.PP
+Example: \fB\-\-speed\-limit=50M\fR limits copy speed to 50 MB/s.
+.RE
+
+.TP
+\fB\-\-no\-color\fR
+Disable colored output.
+
+.TP
+\fB\-\-config=\fIPATH\fR
+Path to configuration file. Default: \fI~/.config/fcp/config\fR
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Show help message and exit.
+
+.TP
+\fB\-\-version\fR
+Show version information and exit.
+
+.SH CONFIGURATION FILE
+.PP
+\fBfcp\fR reads configuration from \fI~/.config/fcp/config\fR (or the
+path specified with \fB\-\-config\fR). The file uses a simple
+key=value format:
+
+.PP
+.nf
+    # fcp configuration file
+    parallel = auto
+    progress = auto
+    color = auto
+    verify_hash = off
+    verbose = auto
+    reflink = auto
+    speed_limit =
+.fi
+
+.PP
+CLI options override config file settings. The config file
+settings override built-in defaults.
+
+.SH IDENTICAL FILE DETECTION
+.PP
+\fBfcp\fR skips copying files that are already identical to their
+destination. The detection uses a fast decision tree:
+
+.RS 4
+.IP \(bu 2
+Same inode and device: skip immediately (hardlinked files)
+.IP \(bu 2
+Different sizes: definitely different, copy
+.IP \(bu 2
+Same size and modification time: likely identical, skip
+.IP \(bu 2
+Same size, different time, \fB\-\-verify\-hash\fR: SHA256 compare
+.RE
+
+.PP
+This approach is similar to rsync's strategy: use the cheapest
+check first, escalating only when necessary.
+
+.SH PERFORMANCE
+.PP
+\fBfcp\fR is optimized for speed through several mechanisms:
+
+.RS 4
+.IP \(bu 2
+\fBCopy file range\fR: Uses the \fBcopy_file_range()\fR syscall for
+zero\-copy transfers when available (Linux 4.5+)
+.IP \(bu 2
+\fBParallel workers\fR: Multiple threads can copy different files
+simultaneously
+.IP \(bu 2
+\fBReflinks\fR: On Btrfs/XFS, uses FICLONE for instant copies
+.IP \(bu 2
+\fBLarge buffers\fR: 1MB copy buffers reduce syscall overhead
+.IP \(bu 2
+\fBSequential I/O hint\fR: Advises the kernel for optimal read-ahead
+.RE
+
+.SH EXAMPLES
+.PP
+Copy a single file:
+.PP
+.nf
+    $ fcp source.txt destination.txt
+.fi
+
+.PP
+Copy a directory recursively with progress:
+.PP
+.nf
+    $ fcp \-r photos/ ~/backup/photos/
+.fi
+
+.PP
+Parallel copy with 4 workers:
+.PP
+.nf
+    $ fcp \-\-parallel=4 documents/ backup/documents/
+.fi
+
+.PP
+Dry run to preview what would be copied:
+.PP
+.nf
+    $ fcp \-\-dry\-run \-r src/ dest/
+.fi
+
+.PP
+Copy with speed limit:
+.PP
+.nf
+    $ fcp \-\-speed\-limit=100M large_file.iso ~/backup/
+.fi
+
+.PP
+Copy multiple sources into a directory:
+.PP
+.nf
+    $ fcp file1.txt file2.txt file3.txt destination_dir/
+.fi
+
+.SH ENVIRONMENT VARIABLES
+.TP
+\fBNO_COLOR\fR
+If set to any value, disables colored output.
+
+.SH EXIT STATUS
+.TP
+\fB0\fR
+Successful completion.
+
+.TP
+\fB1\fR
+An error occurred.
+
+.SH AUTHOR
+Kim Schulz <kim@schulz.dk>
+
+.SH REPORTING BUGS
+Report bugs to: kim@schulz.dk
+
+.SH SEE ALSO
+\fBcp\fP(1), \fBrsync\fP(1), \fBman\fP(7)

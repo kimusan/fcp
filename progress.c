@@ -24,6 +24,8 @@
 #define COLOR_YELLOW  "\033[33m"
 #define COLOR_CYAN    "\033[36m"
 #define COLOR_BOLD    "\033[1m"
+#define COLOR_WHITE   "\033[37m"
+#define COLOR_GRAY    "\033[90m"
 
 static bool use_color(void) {
     static int cached = -1;
@@ -43,8 +45,42 @@ void fcp_progress_init(fcp_progress_t *progress, bool enabled) {
     memset(progress, 0, sizeof(*progress));
     progress->enabled = enabled;
     progress->active = false;
+    progress->phase = FCP_PHASE_IDLE;
     progress->start_time = clock_gettime_sec();
     progress->last_update_time = progress->start_time;
+}
+
+void fcp_progress_banner(fcp_progress_t *progress, const char *src, const char *dst) {
+    if (!progress->enabled) return;
+
+    fprintf(stderr, COLOR_BOLD "fcp" COLOR_RESET ": copying" COLOR_CYAN " %s" COLOR_RESET
+            " -> " COLOR_CYAN " %s" COLOR_RESET "\n", src, dst);
+    fflush(stderr);
+}
+
+void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan) {
+    progress->phase = FCP_PHASE_SCANNING;
+    progress->active = true;
+    progress->files_scanned = 0;
+    progress->files_skipped_identical = 0;
+    progress->files_to_copy = files_to_scan;
+    progress->last_update_time = 0; /* Force first render */
+}
+
+void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found) {
+    progress->files_scanned = files_found;
+}
+
+void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int files_to_copy) {
+    progress->files_skipped_identical = files_skipped;
+    progress->files_to_copy = files_to_copy;
+    progress->phase = FCP_PHASE_COPYING;
+
+    if (!progress->enabled) return;
+
+    fprintf(stderr, "  %d files to copy" COLOR_GRAY", %d identical skipped" COLOR_RESET "\n",
+            files_to_copy, files_skipped);
+    fflush(stderr);
 }
 
 void fcp_progress_update_file(fcp_progress_t *progress, const char *file, uint64_t total) {
@@ -58,7 +94,7 @@ void fcp_progress_update_done(fcp_progress_t *progress, uint64_t bytes) {
     progress->current_done += bytes;
 
     /* Update overall stats */
-    if (progress->current_done == progress->current_total) {
+    if (progress->current_done >= progress->current_total && progress->current_total > 0) {
         /* File just completed */
         progress->total_done += progress->current_total;
         progress->current_done = 0;
@@ -81,8 +117,27 @@ void fcp_progress_render(fcp_progress_t *progress) {
         return;
     }
 
+    /* Throttle rendering */
     double now = clock_gettime_sec();
+    double render_interval = (progress->phase == FCP_PHASE_SCANNING) ? 0.5 : 0.1;
+    if (progress->last_update_time > 0 && now - progress->last_update_time < render_interval) {
+        return;
+    }
+    progress->last_update_time = now;
+
     double elapsed = now - progress->start_time;
+
+    /* Scanning phase: show file count */
+    if (progress->phase == FCP_PHASE_SCANNING) {
+        fprintf(stderr, "\r" COLOR_BOLD "  Scanning..." COLOR_RESET
+                " %d files discovered", progress->files_scanned);
+        if (progress->files_skipped_identical > 0) {
+            fprintf(stderr, COLOR_GRAY " (%d already identical)" COLOR_RESET,
+                    progress->files_skipped_identical);
+        }
+        fflush(stderr);
+        return;
+    }
 
     /* Calculate speed and ETA */
     if (elapsed > 0) {
@@ -126,37 +181,59 @@ void fcp_progress_render(fcp_progress_t *progress) {
 
     if (use_color()) {
         if (progress->current_file) {
+            /* Show current file being copied */
             fprintf(stderr, COLOR_BOLD "%s" COLOR_RESET, progress->current_file);
-            fprintf(stderr, " %s%s%s", COLOR_GREEN, bar, COLOR_RESET);
-            fprintf(stderr, " %5.1f%%", pct);
-            fprintf(stderr, " | %s%s%s/%s%s%s",
+            fprintf(stderr, " " COLOR_GREEN "[%s]" COLOR_RESET " %5.1f%%",
+                    bar, pct);
+            fprintf(stderr, " %s%s%s/%s%s%s",
                     COLOR_CYAN, format_size(progress->total_done), COLOR_RESET,
                     COLOR_CYAN, format_size(progress->total_all > 0 ? progress->total_all : progress->current_total), COLOR_RESET);
-            fprintf(stderr, " | %s%s%s", COLOR_YELLOW, format_speed(progress->speed), COLOR_RESET);
-            fprintf(stderr, " | ETA %s%s%s", COLOR_CYAN, eta_str, COLOR_RESET);
+            fprintf(stderr, " %s%s%s" COLOR_GRAY" | ETA %s%s%s",
+                    COLOR_YELLOW, format_speed(progress->speed), COLOR_RESET,
+                    COLOR_CYAN, eta_str, COLOR_RESET);
         } else {
-            fprintf(stderr, "%s%s%s", COLOR_GREEN, bar, COLOR_RESET);
-            fprintf(stderr, " %5.1f%%", pct);
-            fprintf(stderr, " | %s%s%s/%s%s%s",
+            fprintf(stderr, COLOR_GREEN "[%s]" COLOR_RESET " %5.1f%%",
+                    bar, pct);
+            fprintf(stderr, " %s%s%s/%s%s%s",
                     COLOR_CYAN, format_size(progress->total_done), COLOR_RESET,
                     COLOR_CYAN, format_size(progress->total_all), COLOR_RESET);
-            fprintf(stderr, " | %s%s%s", COLOR_YELLOW, format_speed(progress->speed), COLOR_RESET);
-            fprintf(stderr, " | ETA %s%s%s", COLOR_CYAN, eta_str, COLOR_RESET);
+            fprintf(stderr, " %s%s%s" COLOR_GRAY" | ETA %s%s%s",
+                    COLOR_YELLOW, format_speed(progress->speed), COLOR_RESET,
+                    COLOR_CYAN, eta_str, COLOR_RESET);
         }
     } else {
-        fprintf(stderr, "%s | %5.1f%%", bar, pct);
-        fprintf(stderr, " | %s/%s", format_size(progress->total_done),
+        fprintf(stderr, "[%s] %5.1f%%", bar, pct);
+        fprintf(stderr, " %s/%s", format_size(progress->total_done),
                 format_size(progress->total_all > 0 ? progress->total_all : progress->current_total));
-        fprintf(stderr, " | %s", format_speed(progress->speed));
-        fprintf(stderr, " | ETA %s", eta_str);
+        fprintf(stderr, " %s", format_speed(progress->speed));
+        fprintf(stderr, " ETA %s", eta_str);
     }
 
     fflush(stderr);
 }
 
+void fcp_progress_summary(fcp_progress_t *progress) {
+    if (!progress->enabled) return;
+
+    double elapsed = clock_gettime_sec() - progress->start_time;
+
+    fprintf(stderr, "\r" COLOR_BOLD "fcp" COLOR_RESET ": done" COLOR_GRAY
+            " in %.1fs" COLOR_RESET ", %s transferred",
+            elapsed, format_size(progress->total_done));
+
+    if (progress->files_skipped_identical > 0) {
+        fprintf(stderr, COLOR_GRAY ", %d files skipped (identical)" COLOR_RESET,
+                progress->files_skipped_identical);
+    }
+
+    fprintf(stderr, "\n");
+    fflush(stderr);
+}
+
 void fcp_progress_cleanup(fcp_progress_t *progress) {
     if (progress->enabled) {
-        fprintf(stderr, "\n");
+        /* Move to a new line */
+        fprintf(stderr, "\r\033[K\n");
         fflush(stderr);
     }
 }

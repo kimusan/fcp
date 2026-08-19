@@ -50,6 +50,11 @@ static fcp_queue_t g_queue;
 static pthread_t *g_workers = NULL;
 static int g_num_workers = 0;
 
+/* Scanning counter */
+static int g_files_scanned = 0;
+static int g_files_to_copy = 0;
+static int g_files_skipped = 0;
+
 /* Configuration */
 static fcp_config_t g_config;
 
@@ -284,20 +289,28 @@ static int copy_directory(const char *src, const char *dst) {
             continue;
         }
 
+        g_files_scanned++;
+        if (g_progress.enabled && g_progress.phase == FCP_PHASE_SCANNING) {
+            fcp_progress_update_scanning(&g_progress, g_files_scanned);
+        }
+
         if (S_ISDIR(st.st_mode)) {
             copy_directory(src_path, dst_path);
         } else if (S_ISREG(st.st_mode)) {
-            /* Add to queue for parallel copying */
-            if (opt_parallel > 1) {
-                fcp_queue_push(&g_queue, src_path, dst_path, st.st_size);
+            /* Check if identical first */
+            int identical = fcp_check_identical(src_path, dst_path, opt_verify_hash);
+            if (identical == FCP_IDENTICAL_YES) {
+                g_files_skipped++;
+                if (opt_verbose) {
+                    fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
+                }
             } else {
-                /* Sequential: copy directly */
-                int identical = fcp_check_identical(src_path, dst_path, opt_verify_hash);
-                if (identical == FCP_IDENTICAL_YES) {
-                    if (opt_verbose) {
-                        fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
-                    }
+                g_files_to_copy++;
+                /* Add to queue for parallel copying */
+                if (opt_parallel > 1) {
+                    fcp_queue_push(&g_queue, src_path, dst_path, st.st_size);
                 } else {
+                    /* Sequential: copy directly */
                     if (g_progress.enabled) {
                         fcp_progress_update_file(&g_progress, dst_path, st.st_size);
                     }
@@ -462,6 +475,17 @@ int main(int argc, char *argv[]) {
     bool progress_enabled = !opt_no_progress && (!opt_dry_run || opt_verbose);
     fcp_progress_init(&g_progress, progress_enabled);
 
+    /* Print startup banner */
+    if (optind < argc) {
+        const char *first_arg = argv[optind];
+        const char *banner_src = first_arg;
+        const char *banner_dst = "";
+        if (optind + 1 < argc) {
+            banner_dst = argv[optind + 1];
+        }
+        fcp_progress_banner(&g_progress, banner_src, banner_dst);
+    }
+
     /* Determine number of workers */
     if (opt_parallel == 0) {
         /* Auto: use nproc, capped at 8 */
@@ -500,6 +524,14 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
+        /* Start scanning phase */
+        if (g_progress.enabled) {
+            g_files_scanned = 0;
+            g_files_to_copy = 0;
+            g_files_skipped = 0;
+            fcp_progress_set_scanning(&g_progress, 0);
+        }
+
         for (int i = optind; i < argc; i++) {
             char *dst = malloc(strlen(opt_target_dir) + strlen(argv[i]) + 2);
             const char *basename = strrchr(argv[i], '/');
@@ -509,10 +541,17 @@ int main(int argc, char *argv[]) {
             if (opt_recursive && path_is_dir(argv[i])) {
                 copy_directory(argv[i], dst);
             } else {
+                if (g_progress.enabled && g_progress.phase == FCP_PHASE_SCANNING) {
+                    g_files_to_copy++;
+                }
                 copy_single_file(argv[i], dst);
             }
 
             free(dst);
+        }
+
+        if (g_progress.enabled) {
+            fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
         }
         return 0;
     }
@@ -529,6 +568,13 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
+        if (g_progress.enabled) {
+            g_files_scanned = 0;
+            g_files_to_copy = 0;
+            g_files_skipped = 0;
+            fcp_progress_set_scanning(&g_progress, 0);
+        }
+
         for (int i = optind; i < argc - 1; i++) {
             char *full_dst = malloc(strlen(dst) + strlen(argv[i]) + 2);
             const char *basename = strrchr(argv[i], '/');
@@ -538,17 +584,33 @@ int main(int argc, char *argv[]) {
             if (opt_recursive && path_is_dir(argv[i])) {
                 copy_directory(argv[i], full_dst);
             } else {
+                if (g_progress.enabled && g_progress.phase == FCP_PHASE_SCANNING) {
+                    g_files_to_copy++;
+                }
                 copy_single_file(argv[i], full_dst);
             }
 
             free(full_dst);
+        }
+
+        if (g_progress.enabled) {
+            fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
         }
         return 0;
     }
 
     /* Single source, single destination */
     if (opt_recursive && path_is_dir(src)) {
+        if (g_progress.enabled) {
+            g_files_scanned = 0;
+            g_files_to_copy = 0;
+            g_files_skipped = 0;
+            fcp_progress_set_scanning(&g_progress, 0);
+        }
         copy_directory(src, dst);
+        if (g_progress.enabled) {
+            fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
+        }
     } else {
         /* For single file, just copy directly */
         struct stat st;
@@ -568,6 +630,11 @@ int main(int argc, char *argv[]) {
             pthread_join(g_workers[i], NULL);
         }
         free(g_workers);
+    }
+
+    /* Print summary */
+    if (g_progress.enabled) {
+        fcp_progress_summary(&g_progress);
     }
 
     /* Cleanup progress */

@@ -3,136 +3,193 @@ name: Build and Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
           - arch: amd64
             deb-arch: amd64
-            ubuntu: '24.04'
+            rpm-arch: x86_64
+            archpkg-arch: x86_64
+            cross: false
           - arch: arm64
             deb-arch: arm64
-            ubuntu: '24.04'
-    runs-on: ubuntu-${{ matrix.ubuntu }}
+            rpm-arch: aarch64
+            archpkg-arch: aarch64
+            cross: true
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update || true
-          echo "Installing packages for ${{ matrix.arch }}..."
-          sudo apt-get install -y build-essential debhelper devscripts libssl-dev
-          echo "Verifying installation..."
-          dpkg -l | grep -E "debhelper|devscripts" || echo "WARNING: packages not found in dpkg"
-          which dch && echo "dch found" || echo "dch NOT found"
-          which dh && echo "dh found" || echo "dh NOT found"
-
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'arm64'
+      - name: Setup multiarch repositories (arm64)
+        if: matrix.cross
         run: |
           set -e
-          echo "Adding arm64 architecture..."
-          sudo dpkg --add-architecture arm64
-          echo "Configuring sources for arm64..."
-          # Remove conflicting sources that try to fetch arm64 from main mirror
-          sudo rm -f /etc/apt/sources.list.d/*.list
-          # Add ports mirror for arm64 (this is the correct mirror for non-amd64)
+          echo "Configuring DEB822 sources for arm64..."
+          # Restrict default sources to amd64
+          sudo sed -i 's/^Types: deb/Architectures: amd64\nTypes: deb/' /etc/apt/sources.list.d/ubuntu.sources
+          
+          # Add ports mirror for arm64
           cat <<EOF | sudo tee /etc/apt/sources.list.d/arm64.sources
           Types: deb
           URIs: http://ports.ubuntu.com/ubuntu-ports/
-          Suites: noble noble-security noble-updates
-          Components: main restricted universe multiverse
+          Suites: noble noble-updates noble-security
+          Components: main universe restricted multiverse
           Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           EOF
-          echo "Updating package lists..."
+
+          sudo dpkg --add-architecture arm64
+
+      - name: Install dependencies
+        run: |
+          set -e
           sudo apt-get update
-          echo "Installing cross-compilation tools..."
-          sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
-          echo "Cross-compilation tools installed successfully"
+          sudo apt-get install -y build-essential debhelper devscripts rpm zstd
+
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          set -e
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu libssl-dev:arm64 qemu-user-static
+
+      - name: Install native build dependencies
+        if: "!matrix.cross"
+        run: |
+          set -e
+          sudo apt-get install -y libssl-dev
 
       - name: Build binary
         env:
-          CC: ${{ matrix.arch == 'amd64' && 'gcc' || (matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'arm-linux-gnueabihf-gcc') }}
-          CFLAGS: '-O2 -Wall -Wextra -std=gnu11'
+          CC: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || 'gcc' }}
         run: |
           set -e
           echo "Building for ${{ matrix.arch }} with $CC..."
           make clean
-          make
+          make CC="$CC"
           echo "Binary built successfully"
           ls -la fcp
-          file fcp || true
+          file fcp
 
       - name: Create tarball
         run: |
-          VERSION=$(./fcp --version | awk '{print $2}')
+          set -e
+          VERSION=$(grep '#define FCP_VERSION' fcp.h | cut -d'"' -f2)
           tar -czf fcp_${VERSION}_Linux_${{ matrix.arch }}.tar.gz \
             fcp \
-            man/fcp.1
+            man/fcp.1 \
+            README.md \
+            LICENSE
 
       - name: Build deb package
         run: |
           set -e
-          VERSION=$(./fcp --version | awk '{print $2}')
-          echo "Building fcp version $VERSION for ${{ matrix.arch }}"
-          # Update changelog
-          dch --local ~github --distribution unstable "Automated build from $GITHUB_SHA for ${{ matrix.arch }}"
-          # Build deb
-          dpkg-buildpackage -us -uc -b -d
-          # Rename to include arch
-          mv ../fcp_${VERSION}-1_${{ matrix.deb-arch }}.deb \
-             fcp_${VERSION}_${{ matrix.deb-arch }}.deb
+          VERSION=$(grep '#define FCP_VERSION' fcp.h | cut -d'"' -f2)
+          echo "Building deb package version $VERSION for ${{ matrix.deb-arch }}"
+          
+          make clean
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            dpkg-buildpackage -us -uc -b -d -a${{ matrix.deb-arch }}
+          else
+            dpkg-buildpackage -us -uc -b -d
+          fi
+
+          mv ../fcp_${VERSION}*_${{ matrix.deb-arch }}.deb fcp_${VERSION}_${{ matrix.deb-arch }}.deb
 
       - name: Build RPM package
         run: |
           set -e
-          VERSION=$(./fcp --version | awk '{print $2}')
-          echo "Building fcp version $VERSION RPM"
-          # Install RPM build tools
-          sudo apt-get install -y rpm rpmbuild
-          # Setup RPM build environment
-          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          # Create source tarball
-          tar -czf ~/rpmbuild/SOURCES/fcp-${VERSION}.tar.gz \
-            --transform 's,^,fcp-${VERSION}/,' \
+          VERSION=$(grep '#define FCP_VERSION' fcp.h | cut -d'"' -f2)
+          echo "Building RPM package version $VERSION for ${{ matrix.rpm-arch }}"
+          
+          TOPDIR="$(pwd)/rpmbuild"
+          mkdir -p "$TOPDIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS,tmp,rpmdb}
+          
+          tar -czf "$TOPDIR/SOURCES/fcp-${VERSION}.tar.gz" \
+            --transform "s,^,fcp-${VERSION}/," \
             Makefile fcp.c util.c copy.c identical.c hash.c progress.c colors.c queue.c config.c \
             fcp.h util.h copy.h identical.h hash.h progress.h colors.h queue.h config.h \
-            fcp.spec man/fcp.1
-          # Build RPM
-          rpmbuild -bb fcp.spec --define "_topdir $(pwd)/rpmbuild"
-          # Move RPMs to current directory
-          ls -la rpmbuild/RPMS/*/fcp-${VERSION}*.rpm
-          mv rpmbuild/RPMS/*/fcp-${VERSION}*.rpm . 2>/dev/null || \
-          mv rpmbuild/RPMS/noarch/fcp-${VERSION}*.rpm . 2>/dev/null || \
-          mv rpmbuild/RPMS/x86_64/fcp-${VERSION}*.rpm . 2>/dev/null || \
-          mv rpmbuild/RPMS/aarch64/fcp-${VERSION}*.rpm . 2>/dev/null || \
-          echo "RPM not found in expected location"
+            fcp.spec man/fcp.1 README.md LICENSE
 
-      - name: Build PKGEXT package (Arch Linux)
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            rpmbuild -bb --nodeps \
+              --target=${{ matrix.rpm-arch }} \
+              --define "_topdir $TOPDIR" \
+              --define "_tmppath $TOPDIR/tmp" \
+              --define "_dbpath $TOPDIR/rpmdb" \
+              --define "__cc aarch64-linux-gnu-gcc" \
+              --define "__strip aarch64-linux-gnu-strip" \
+              fcp.spec
+          else
+            rpmbuild -bb --nodeps \
+              --define "_topdir $TOPDIR" \
+              --define "_tmppath $TOPDIR/tmp" \
+              --define "_dbpath $TOPDIR/rpmdb" \
+              fcp.spec
+          fi
+
+          cp "$TOPDIR"/RPMS/*/*.rpm .
+
+      - name: Build Arch Linux package (pkg.tar.zst)
         run: |
           set -e
-          VERSION=$(./fcp --version | awk '{print $2}')
-          echo "Building fcp version $VERSION PKGEXT"
-          # Install packer/pacman if needed
-          sudo apt-get install -y pacutils
-          # Build PKGEXT
-          makepkg --noconfirm --skippgpcheck
-          # Rename to include version
-          ls -la *.pkg.tar.*
+          VERSION=$(grep '#define FCP_VERSION' fcp.h | cut -d'"' -f2)
+          ARCH="${{ matrix.archpkg-arch }}"
+          echo "Building Arch Linux package for $ARCH..."
+
+          make clean
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            make CC=aarch64-linux-gnu-gcc
+          else
+            make CC=gcc
+          fi
+
+          PKGDIR="$(pwd)/archpkg"
+          rm -rf "$PKGDIR"
+          mkdir -p "$PKGDIR/usr/bin" "$PKGDIR/usr/share/man/man1" "$PKGDIR/usr/share/licenses/fcp"
+          
+          cp fcp "$PKGDIR/usr/bin/fcp"
+          gzip -9c man/fcp.1 > "$PKGDIR/usr/share/man/man1/fcp.1.gz"
+          cp LICENSE "$PKGDIR/usr/share/licenses/fcp/LICENSE"
+
+          SIZE=$(du -sb "$PKGDIR" | awk '{print $1}')
+          BUILDDATE=$(date +%s)
+
+          cat <<EOF > "$PKGDIR/.PKGINFO"
+          pkgname = fcp
+          pkgbase = fcp
+          pkgver = ${VERSION}-1
+          pkgdesc = Faster CP with progress, identical file detection, and parallelism
+          url = https://github.com/kimusan/fcp
+          builddate = ${BUILDDATE}
+          packager = Kim Schulz <kim@schulz.dk>
+          size = ${SIZE}
+          arch = ${ARCH}
+          license = MIT
+          depend = openssl
+          EOF
+
+          sed -i 's/^[ \t]*//' "$PKGDIR/.PKGINFO"
+
+          tar --zstd -cf "fcp-${VERSION}-1-${ARCH}.pkg.tar.zst" -C "$PKGDIR" .PKGINFO usr
+          rm -rf "$PKGDIR"
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
+            fcp_*.tar.gz
             fcp_*.deb
             fcp-*.rpm
-            *.pkg.tar.*
+            fcp-*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

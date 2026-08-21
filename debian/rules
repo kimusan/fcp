@@ -6,4 +6,3 @@
 override_dh_auto_install:
 	install -D -m 755 fcp $(CURDIR)/debian/fcp/usr/bin/fcp
 	install -D -m 644 man/fcp.1 $(CURDIR)/debian/fcp/usr/share/man/man1/fcp.1
-	gzip -9 $(CURDIR)/debian/fcp/usr/share/man/man1/fcp.1

@@ -32,17 +32,17 @@ features including:
 
 %build
 %define _smp_mflags -j%{nil}
-make %{?_smp_mflags}
+make CC="%{?__cc}%{!?__cc:gcc}" %{?_smp_mflags}
 
 %install
 make install DESTDIR=%{buildroot} PREFIX=/usr
 
 %files
-%doc LICENSE README.md
+%doc README.md
 %license LICENSE
 %{_bindir}/fcp
 %{_mandir}/man1/fcp.1*
 
 %changelog
-* Tue Aug 21 2026 Kim Schulz <kim@schulz.dk> - 1.0.0-1
+* Fri Aug 21 2026 Kim Schulz <kim@schulz.dk> - 1.0.0-1
 - Initial package

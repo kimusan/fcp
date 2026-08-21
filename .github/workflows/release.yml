@@ -57,15 +57,19 @@ jobs:
           set -e
           VERSION=$(./fcp --version | awk '{print $2}')
           echo "Building fcp version $VERSION for ${{ matrix.arch }}"
-          # Update changelog
-          dch --local ~github --distribution unstable "Automated build from $GITHUB_SHA for ${{ matrix.arch }}" || true
+          # Manually update changelog (dch may not be available)
+          echo "fcp ($VERSION-1) unstable; urgency=medium" >> debian/changelog
+          echo "" >> debian/changelog
+          echo "  * Automated build from $GITHUB_SHA for ${{ matrix.arch }}" >> debian/changelog
+          echo "" >> debian/changelog
+          echo " -- Kim Schulz <kim@schulz.dk>  $(date -R)" >> debian/changelog
           # Build deb
-          dpkg-buildpackage -us -uc -b -d || { echo "dpkg-buildpackage failed"; exit 1; }
+          dpkg-buildpackage -us -uc -b -d
           # List built packages
           ls -la ../*.deb
           # Rename to include arch
           mv ../fcp_${VERSION}-1_${{ matrix.deb-arch }}.deb \
-             fcp_${VERSION}_${{ matrix.deb-arch }}.deb || { echo "Failed to rename deb"; ls -la ../*.deb; exit 1; }
+             fcp_${VERSION}_${{ matrix.deb-arch }}.deb
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v1

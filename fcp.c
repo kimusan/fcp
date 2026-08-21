@@ -503,6 +503,13 @@ int main(int argc, char *argv[]) {
         fcp_config_load(&g_config, config_path);
     }
 
+    opt_parallel = g_config.parallel;
+    opt_reflink = g_config.reflink;
+    opt_speed_limit = g_config.speed_limit;
+    opt_verify_hash = g_config.verify_hash ? 1 : 0;
+    opt_no_progress = g_config.progress_auto ? 0 : 1;
+    opt_no_color = g_config.color_auto ? 0 : 1;
+
     while ((opt = getopt_long(argc, argv, "rRiInfvdsut:PhV", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'r':
@@ -575,7 +582,14 @@ int main(int argc, char *argv[]) {
                 opt_no_color = 1;
                 break;
             case 1011: /* --config */
-                fcp_config_load(&g_config, optarg);
+                if (fcp_config_load(&g_config, optarg) == 0) {
+                    opt_parallel = g_config.parallel;
+                    opt_reflink = g_config.reflink;
+                    opt_speed_limit = g_config.speed_limit;
+                    opt_verify_hash = g_config.verify_hash ? 1 : 0;
+                    opt_no_progress = g_config.progress_auto ? 0 : 1;
+                    opt_no_color = g_config.color_auto ? 0 : 1;
+                }
                 break;
 case 'h':
             print_help(stdout);

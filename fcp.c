@@ -186,6 +186,7 @@ static int copy_single_file(const char *src, const char *dst) {
     uint64_t file_size = 0;
     if (stat(src, &st) == 0) {
         file_size = st.st_size;
+        g_bytes_total += file_size;
         fcp_progress_update_file(&g_progress, dst, file_size);
     }
 
@@ -573,7 +574,7 @@ int main(int argc, char *argv[]) {
         struct stat target_stat;
         if (stat(opt_target_dir, &target_stat) != 0 || !S_ISDIR(target_stat.st_mode)) {
             fprintf(stderr, "fcp: '%s' is not a directory\n", opt_target_dir);
-            return 1;
+            goto cleanup;
         }
 
         /* Start scanning phase */
@@ -605,22 +606,21 @@ int main(int argc, char *argv[]) {
         }
 
         if (g_progress.enabled) {
+            g_progress.total_all = g_bytes_total;
             fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
         }
-        return 0;
-    }
+    } else if (optind + 1 < argc) {
+        /* Standard: source(s) destination (multiple sources) */
+        /* The last non-option argument is always the destination */
+        const char *dst = argv[argc - 1];
+        const char *src = argv[optind];
+        (void)src; /* unused in this branch */
 
-    /* Standard: source(s) destination */
-    /* The last non-option argument is always the destination */
-    const char *dst = argv[argc - 1];
-    const char *src = argv[optind];
-
-    if (optind + 1 < argc) {
         /* Multiple sources - destination must be directory */
         struct stat dst_stat;
         if (stat(dst, &dst_stat) != 0 || !S_ISDIR(dst_stat.st_mode)) {
             fprintf(stderr, "fcp: target '%s' is not a directory\n", dst);
-            return 1;
+            goto cleanup;
         }
 
         if (g_progress.enabled) {
@@ -649,51 +649,54 @@ int main(int argc, char *argv[]) {
         }
 
         if (g_progress.enabled) {
-            fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
-        }
-        return 0;
-    }
-
-    /* Single source, single destination */
-    if (opt_recursive && path_is_dir(src)) {
-        if (g_progress.enabled) {
-            g_files_scanned = 0;
-            g_files_to_copy = 0;
-            g_files_skipped = 0;
-            g_bytes_skipped = 0;
-            g_bytes_total = 0;
-            fcp_progress_set_scanning(&g_progress, 0);
-        }
-        copy_directory(src, dst);
-        if (g_progress.enabled) {
-            /* Set total_all to total bytes found (skipped + to copy) so progress bar shows full work */
             g_progress.total_all = g_bytes_total;
             fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
-            /* Show initial progress bar with skipped bytes already counted */
-            fcp_progress_render(&g_progress);
         }
     } else {
-        /* For single file, just copy directly */
-        /* If destination is a directory, append source basename */
-        char *final_dst = NULL;
-        if (path_is_dir(dst)) {
-            const char *basename = strrchr(src, '/');
-            basename = basename ? basename + 1 : src;
-            final_dst = malloc(strlen(dst) + strlen(basename) + 2);
-            sprintf(final_dst, "%s/%s", dst, basename);
-        } else {
-            final_dst = strdup(dst);
-        }
+        /* Single source, single destination */
+        const char *src = argv[optind];
+        const char *dst = argv[optind + 1];
 
-        struct stat st;
-        if (stat(src, &st) == 0) {
-            if (g_num_workers > 1) {
-                fcp_queue_push(&g_queue, src, final_dst, st.st_size);
-            } else {
-                copy_single_file(src, final_dst);
+        if (opt_recursive && path_is_dir(src)) {
+            if (g_progress.enabled) {
+                g_files_scanned = 0;
+                g_files_to_copy = 0;
+                g_files_skipped = 0;
+                g_bytes_skipped = 0;
+                g_bytes_total = 0;
+                fcp_progress_set_scanning(&g_progress, 0);
             }
+            copy_directory(src, dst);
+            if (g_progress.enabled) {
+                /* Set total_all to total bytes found (skipped + to copy) so progress bar shows full work */
+                g_progress.total_all = g_bytes_total;
+                fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
+                /* Show initial progress bar with skipped bytes already counted */
+                fcp_progress_render(&g_progress);
+            }
+        } else {
+            /* For single file, just copy directly */
+            /* If destination is a directory, append source basename */
+            char *final_dst = NULL;
+            if (path_is_dir(dst)) {
+                const char *basename = strrchr(src, '/');
+                basename = basename ? basename + 1 : src;
+                final_dst = malloc(strlen(dst) + strlen(basename) + 2);
+                sprintf(final_dst, "%s/%s", dst, basename);
+            } else {
+                final_dst = strdup(dst);
+            }
+
+            struct stat st;
+            if (stat(src, &st) == 0) {
+                if (g_num_workers > 1) {
+                    fcp_queue_push(&g_queue, src, final_dst, st.st_size);
+                } else {
+                    copy_single_file(src, final_dst);
+                }
+            }
+            free(final_dst);
         }
-        free(final_dst);
     }
 
     /* Mark queue as done and wait for workers */
@@ -710,6 +713,7 @@ int main(int argc, char *argv[]) {
         fcp_progress_summary(&g_progress);
     }
 
+cleanup:
     /* Cleanup progress */
     fcp_progress_cleanup(&g_progress);
     fcp_queue_cleanup(&g_queue);

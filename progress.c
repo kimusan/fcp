@@ -245,6 +245,11 @@ void fcp_progress_render(fcp_progress_t *progress) {
 void fcp_progress_summary(fcp_progress_t *progress) {
     if (!progress->enabled) return;
 
+    /* Ensure progress bar shows 100% before summary */
+    progress->total_done = progress->total_all;
+    fcp_progress_render(progress);
+    fprintf(stderr, "\n");
+
     double elapsed = clock_gettime_sec() - progress->start_time;
 
     fprintf(stderr, "\r" COLOR_BOLD "fcp" COLOR_RESET ": done" COLOR_GRAY

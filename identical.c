@@ -5,6 +5,7 @@
  */
 
 #include "identical.h"
+#include "hash.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,21 +34,26 @@ int fcp_check_identical(const char *src, const char *dst, bool verify_hash) {
         return FCP_IDENTICAL_NO;
     }
 
-    /* Check 3: Same size and mtime -> likely identical */
-    if (src_stat.st_mtime == dst_stat.st_mtime) {
-        /* If verify_hash is requested, do full SHA256 comparison */
-        if (verify_hash) {
-            /* Hash comparison will be done by the caller using hash.c */
-            return FCP_IDENTICAL_UNKNOWN;
+    /* If verify_hash is NOT enabled: use fast mtime check */
+    if (!verify_hash) {
+        if (src_stat.st_mtime == dst_stat.st_mtime) {
+            return FCP_IDENTICAL_YES;
         }
-        return FCP_IDENTICAL_YES;
+        return FCP_IDENTICAL_NO;
     }
 
-    /* Different mtime, same size -> need hash comparison if enabled */
-    if (verify_hash) {
+    /* Check 3: verify_hash is enabled -> compute and compare SHA256 */
+    char src_hash[FCP_HASH_HEX_LEN];
+    char dst_hash[FCP_HASH_HEX_LEN];
+
+    if (fcp_hash_file_into(src, src_hash, sizeof(src_hash)) != 0 ||
+        fcp_hash_file_into(dst, dst_hash, sizeof(dst_hash)) != 0) {
         return FCP_IDENTICAL_UNKNOWN;
     }
 
-    /* Default: copy (conservative) */
+    if (strcmp(src_hash, dst_hash) == 0) {
+        return FCP_IDENTICAL_YES;
+    }
+
     return FCP_IDENTICAL_NO;
 }

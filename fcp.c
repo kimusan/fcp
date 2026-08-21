@@ -612,14 +612,10 @@ case 'h':
             g_progress.total_all = g_bytes_total;
             fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
         }
-    } else if (optind + 1 < argc) {
-        /* Standard: source(s) destination (multiple sources) */
-        /* The last non-option argument is always the destination */
-        const char *dst = argv[argc - 1];
-        const char *src = argv[optind];
-        (void)src; /* unused in this branch */
-
+    } else if (argc - optind > 2) {
         /* Multiple sources - destination must be directory */
+        const char *dst = argv[argc - 1];
+
         struct stat dst_stat;
         if (stat(dst, &dst_stat) != 0 || !S_ISDIR(dst_stat.st_mode)) {
             fprintf(stderr, "fcp: target '%s' is not a directory\n", dst);
@@ -655,7 +651,7 @@ case 'h':
             g_progress.total_all = g_bytes_total;
             fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
         }
-    } else {
+    } else if (argc - optind == 2) {
         /* Single source, single destination */
         const char *src = argv[optind];
         const char *dst = argv[optind + 1];
@@ -671,15 +667,12 @@ case 'h':
             }
             copy_directory(src, dst);
             if (g_progress.enabled) {
-                /* Set total_all to total bytes found (skipped + to copy) so progress bar shows full work */
                 g_progress.total_all = g_bytes_total;
                 fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
-                /* Show initial progress bar with skipped bytes already counted */
                 fcp_progress_render(&g_progress);
             }
         } else {
             /* For single file, just copy directly */
-            /* If destination is a directory, append source basename */
             char *final_dst = NULL;
             if (path_is_dir(dst)) {
                 const char *basename = strrchr(src, '/');
@@ -702,23 +695,22 @@ case 'h':
         }
     }
 
+cleanup:
     /* Mark queue as done and wait for workers */
-    if (g_num_workers > 1) {
+    if (g_num_workers > 1 && g_workers) {
         fcp_queue_mark_done(&g_queue);
         for (int i = 0; i < g_num_workers; i++) {
             pthread_join(g_workers[i], NULL);
         }
         free(g_workers);
+        g_workers = NULL;
     }
 
-    /* Print summary */
+    /* Print summary and cleanup progress */
     if (g_progress.enabled) {
         fcp_progress_summary(&g_progress);
+        fcp_progress_cleanup(&g_progress);
     }
-
-cleanup:
-    /* Cleanup progress */
-    fcp_progress_cleanup(&g_progress);
     fcp_queue_cleanup(&g_queue);
 
     return 0;

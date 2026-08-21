@@ -73,7 +73,7 @@ fcp -f important.txt ~/backup/important.txt
 
 | Option | Description |
 |--------|-------------|
-| `-r, --recursive` | Copy directories recursively |
+| `-r, -R, --recursive` | Copy directories recursively |
 | `-i, --interactive` | Prompt before overwrite |
 | `-n, --no-clobber` | Do not overwrite existing files |
 | `-f, --force` | Remove existing destination first |
@@ -90,8 +90,9 @@ fcp -f important.txt ~/backup/important.txt
 | `-P, --progress` | auto | Show progress bar |
 | `--no-progress` | - | Disable progress display |
 | `--parallel=[N\|auto]` | auto | Parallel copy workers (default: nproc, max 8) |
+| `--exclude=PATTERN` | - | Exclude files matching PATTERN (glob, can be repeated) |
 | `--verify-hash` | off | Use SHA256 for identical detection |
-| `--reflink=[auto\|always\|never]` | auto | Use reflink when supported |
+| `--reflink=[auto\|always\|never]` | auto | Use reflink (FICLONE) when supported |
 | `--dry-run` | off | Preview without copying |
 | `--speed-limit=SIZE` | no limit | Cap copy speed (e.g., `10M`, `1G`) |
 | `--no-color` | auto | Disable colored output |
@@ -160,6 +161,14 @@ Parallelism helps most when:
 
 For single large files on the same disk, sequential copy is optimal.
 
+## Packages
+
+Pre-built binaries and native packages for **x86_64** (`amd64`) and **ARM64** (`aarch64`) are provided on the GitHub Releases page:
+- **Debian / Ubuntu**: `.deb` packages
+- **Fedora / RHEL / AlmaLinux**: `.rpm` packages
+- **Arch Linux**: `.pkg.tar.zst` packages
+- **Generic Linux**: `.tar.gz` standalone binary archives
+
 ## License
 
 MIT License - Copyright (c) 2026 Kim Schulz <kim@schulz.dk>
@@ -206,9 +215,13 @@ Contributions are welcome! Please:
 
 ## Roadmap
 
-- [ ] `--exclude` patterns (like rsync)
+- [x] `--exclude` pattern filtering (like rsync)
+- [x] Full CLI options & standard `cp` compatibility
+- [x] High-performance direct FICLONE reflink
+- [ ] Sparse file acceleration (`--sparse=auto|always|never`) with `SEEK_HOLE`/`SEEK_DATA` (v2.0)
+- [ ] Full metadata preservation & archive mode (`-a, --archive` / `-p, --preserve`) (v2.0)
+- [ ] Atomic copy mode (`--atomic`) via temporary swap (v2.0)
 - [ ] Backup modes (`--backup`, `--suffix`)
-- [ ] Preserve permissions/timestamps (`-p`, `-a`)
 - [ ] Compression support (zstd, lz4)
 - [ ] Network copy support (via SSH)
 

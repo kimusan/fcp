@@ -37,8 +37,10 @@ jobs:
       - name: Install cross-compilation tools
         if: matrix.arch != 'amd64'
         run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
-          sudo apt-get install -y libssl-dev:arm64 libssl-dev:armhf
+          sudo dpkg --add-architecture ${{ matrix.arch }}
+          sudo apt-get update
+          sudo apt-get install -y gcc-${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu' || 'arm-linux-gnueabihf' }}
+          sudo apt-get install -y libssl-dev:${{ matrix.arch }}
 
       - name: Build binary
         env:

@@ -17,7 +17,7 @@ jobs:
             ubuntu: '24.04'
           - arch: arm64
             deb-arch: arm64
-            ubuntu: '24.04'
+            ubuntu: '22.04'
     runs-on: ubuntu-${{ matrix.ubuntu }}
 
     steps:
@@ -38,15 +38,12 @@ jobs:
         if: matrix.arch == 'arm64'
         run: |
           set -e
-          echo "Installing cross-compilation tools for arm64..."
-          # Download libssl-dev:arm64 directly from Launchpad
-          sudo apt-get download libssl-dev:amd64 2>/dev/null || true
-          wget -q http://launchpadlibrarian.net/871454354/libssl-dev_3.0.13-0ubuntu3.12_arm64.deb
-          wget -q http://launchpadlibrarian.net/871454353/libssl3t64_3.0.13-0ubuntu3.12_arm64.deb
-          # Download cross-compiler
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          # Install the downloaded packages
-          sudo dpkg -i libssl-dev_3.0.13-0ubuntu3.12_arm64.deb libssl3t64_3.0.13-0ubuntu3.12_arm64.deb || sudo apt-get install -f -y
+          echo "Adding arm64 architecture..."
+          sudo dpkg --add-architecture arm64
+          echo "Updating package lists..."
+          sudo apt-get update
+          echo "Installing cross-compilation tools..."
+          sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
           echo "Cross-compilation tools installed successfully"
 
       - name: Build binary

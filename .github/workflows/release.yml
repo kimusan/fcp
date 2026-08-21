@@ -15,10 +15,14 @@ jobs:
         include:
           - arch: amd64
             deb-arch: amd64
+            ubuntu: noble
           - arch: arm64
             deb-arch: arm64
+            ubuntu: noble
           - arch: armhf
             deb-arch: armhf
+            ubuntu: jammy
+    runs-on: ubuntu-${{ matrix.ubuntu }}
 
     steps:
       - name: Checkout repository

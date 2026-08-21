@@ -17,7 +17,7 @@ jobs:
             ubuntu: '24.04'
           - arch: arm64
             deb-arch: arm64
-            ubuntu: '22.04'
+            ubuntu: '24.04'
     runs-on: ubuntu-${{ matrix.ubuntu }}
 
     steps:
@@ -26,7 +26,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update || true
           echo "Installing packages for ${{ matrix.arch }}..."
           sudo apt-get install -y build-essential debhelper devscripts libssl-dev
           echo "Verifying installation..."
@@ -38,7 +38,7 @@ jobs:
         if: matrix.arch == 'arm64'
         run: |
           sudo dpkg --add-architecture arm64
-          sudo apt-get update
+          sudo apt-get update || true
           sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
 
       - name: Build binary

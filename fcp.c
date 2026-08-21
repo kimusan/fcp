@@ -27,8 +27,10 @@
 #include <libgen.h>
 #include <fcntl.h>
 #include <stdatomic.h>
+#include <signal.h>
+#include <sys/xattr.h>
 
-#define FCP_VERSION "1.0.0"
+#define FCP_VERSION "2.0.0"
 
 /* Global options */
 static int opt_recursive = 0;
@@ -42,6 +44,9 @@ static int opt_update = 0;
 static int opt_dry_run = 0;
 static int opt_parallel = 0;
 static int opt_reflink = FCP_REFLINK_AUTO;
+static int opt_sparse = FCP_SPARSE_AUTO;
+static int opt_preserve = FCP_PRESERVE_DEFAULT;
+static int opt_atomic = 0;
 static uint64_t opt_speed_limit = 0;
 static int opt_no_progress = 0;
 static int opt_no_color = 0;
@@ -72,7 +77,49 @@ static atomic_int g_errors = 0;
 /* Configuration */
 static fcp_config_t g_config;
 
+/* Signal handler */
+static void sig_handler(int sig) {
+    (void)sig;
+    /* Restore cursor and clear line */
+    fprintf(stderr, "\r\033[?25h\033[K\n");
+    _exit(130);
+}
+
+static int parse_preserve_attrs(const char *arg) {
+    if (!arg || strcmp(arg, "all") == 0) {
+        return FCP_PRESERVE_ALL;
+    }
+    if (strcmp(arg, "none") == 0) {
+        return FCP_PRESERVE_NONE;
+    }
+    if (strcmp(arg, "default") == 0) {
+        return FCP_PRESERVE_DEFAULT;
+    }
+
+    int flags = 0;
+    char *copy = strdup(arg);
+    char *token = strtok(copy, ",");
+    while (token) {
+        if (strcmp(token, "mode") == 0) {
+            flags |= FCP_PRESERVE_MODE;
+        } else if (strcmp(token, "ownership") == 0) {
+            flags |= FCP_PRESERVE_OWNERSHIP;
+        } else if (strcmp(token, "timestamps") == 0) {
+            flags |= FCP_PRESERVE_TIMESTAMPS;
+        } else if (strcmp(token, "xattr") == 0) {
+            flags |= FCP_PRESERVE_XATTR;
+        } else if (strcmp(token, "all") == 0) {
+            flags |= FCP_PRESERVE_ALL;
+        }
+        token = strtok(NULL, ",");
+    }
+    free(copy);
+    return flags;
+}
+
 static const struct option long_options[] = {
+    {"archive",        no_argument,       NULL, 'a'},
+    {"preserve",       optional_argument, NULL, 'p'},
     {"recursive",      no_argument,       NULL, 'r'},
     {"interactive",    no_argument,       NULL, 'i'},
     {"no-clobber",     no_argument,       NULL, 'n'},
@@ -94,6 +141,8 @@ static const struct option long_options[] = {
     {"help",           no_argument,       NULL, 'h'},
     {"version",        no_argument,       NULL, 'V'},
     {"exclude",        required_argument, NULL, 1014},
+    {"sparse",         required_argument, NULL, 1015},
+    {"atomic",         no_argument,       NULL, 1016},
     {NULL, 0, NULL, 0}
 };
 
@@ -108,7 +157,9 @@ static void print_help(FILE *fp) {
         "\n"
         "fcp %s - Faster CP with progress, identical file detection, and parallelism\n"
         "\n"
-        "Basic options:\n"
+        "Standard options:\n"
+        "  -a, --archive            Same as -d -r --preserve=all\n"
+        "  -p, --preserve[=ATTRS]   Preserve specified attributes (mode,ownership,timestamps,xattr,all)\n"
         "  -r, -R, --recursive      Copy directories recursively\n"
         "  -i, --interactive        Prompt before overwrite\n"
         "  -n, --no-clobber         Do not overwrite an existing file\n"
@@ -119,25 +170,21 @@ static void print_help(FILE *fp) {
         "  -u, --update             Copy only when source is newer\n"
         "  -t, --target-directory   Copy all sources into DIRECTORY\n"
         "\n"
-        "fcp-specific options:\n"
+        "Performance & advanced options:\n"
         "  -P, --progress           Show progress bar (default: auto)\n"
         "      --no-progress        Disable progress display\n"
         "      --parallel=[N|auto]  Number of parallel copy workers (default: auto)\n"
+        "      --sparse=MODE        Sparse copy mode (auto|always|never, default: auto)\n"
+        "      --atomic             Atomically replace destination using temporary staging\n"
         "      --exclude=PATTERN    Exclude files matching PATTERN (glob)\n"
         "      --verify-hash        Use SHA256 for identical file detection\n"
         "      --reflink=MODE       Use reflink when supported (auto|always|never)\n"
         "      --dry-run            Preview without copying\n"
         "      --speed-limit=SIZE   Cap copy speed (e.g., 10M, 1G)\n"
         "      --no-color           Disable colored output\n"
+        "      --config=PATH        Specify configuration file\n"
         "  -V, --version            Show version information\n"
         "  -h, --help               Show this help message\n"
-        "\n"
-        "Examples:\n"
-        "  fcp source.txt destination.txt          Copy a file\n"
-        "  fcp -r source_dir/ destination_dir/     Copy directory recursively\n"
-        "  fcp --parallel=4 --progress file1 file2 dest/  Parallel copy with progress\n"
-        "  fcp --dry-run -r dir1/ dir2/            Preview what would be copied\n"
-        "  fcp --speed-limit=50M large_file.bin    Copy with 50MB/s speed limit\n"
         "\n"
         "Report bugs to: kim@schulz.dk\n",
         FCP_VERSION);
@@ -248,7 +295,8 @@ static int copy_single_file(const char *src, const char *dst) {
         fcp_progress_update_file(&g_progress, dst, file_size);
     }
 
-    int ret = fcp_copy_file(src, dst, opt_reflink, opt_dry_run, opt_speed_limit, &g_progress);
+    int ret = fcp_copy_file(src, dst, opt_reflink, opt_sparse, opt_preserve, opt_atomic,
+                            opt_dry_run, opt_speed_limit, &g_progress);
 
     if (ret == FCP_COPY_OK) {
         fcp_progress_complete_file(&g_progress);
@@ -308,8 +356,8 @@ static void *worker_thread(void *arg) {
         }
 
         /* Copy file */
-        int ret = fcp_copy_file(item.src, item.dst, opt_reflink, opt_dry_run,
-                               opt_speed_limit, &g_progress);
+        int ret = fcp_copy_file(item.src, item.dst, opt_reflink, opt_sparse, opt_preserve,
+                               opt_atomic, opt_dry_run, opt_speed_limit, &g_progress);
 
         if (ret == FCP_COPY_OK) {
             g_files_to_copy++;
@@ -349,7 +397,7 @@ static int copy_directory(const char *src, const char *dst) {
     struct dirent *de;
     DIR *dir;
     char *src_path, *dst_path;
-    char clean_dst[1024];
+    char clean_dst[4096];
 
     /* Strip trailing slash from dst */
     strncpy(clean_dst, dst, sizeof(clean_dst) - 1);
@@ -360,9 +408,8 @@ static int copy_directory(const char *src, const char *dst) {
         dst_len--;
     }
 
-    /* Ensure destination exists (skip if dst already exists as directory) */
+    /* Ensure destination exists */
     if (mkdir(clean_dst, 0755) != 0 && errno != EEXIST) {
-        /* If it's an existing directory, that's fine */
         struct stat st;
         if (stat(clean_dst, &st) != 0 || !S_ISDIR(st.st_mode)) {
             fprintf(stderr, "fcp: cannot create directory '%s': %s\n", clean_dst, strerror(errno));
@@ -405,7 +452,6 @@ static int copy_directory(const char *src, const char *dst) {
         g_bytes_total += st.st_size;
         if (g_progress.enabled && g_progress.phase == FCP_PHASE_SCANNING) {
             fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped, g_files_skipped, g_bytes_total);
-            /* Render scanning progress from main thread */
             fcp_progress_render(&g_progress);
         }
 
@@ -417,28 +463,25 @@ static int copy_directory(const char *src, const char *dst) {
             if (identical == FCP_IDENTICAL_YES) {
                 g_files_skipped++;
                 g_bytes_skipped += st.st_size;
-                /* Count skipped files in progress (they're "instantly copied") */
                 if (g_progress.enabled) {
                     g_progress.total_all += st.st_size;
                     g_progress.total_done += st.st_size;
                 }
-                /* Update scanning progress to show skipped files */
                 fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped, g_files_skipped, g_bytes_total);
                 if (opt_verbose) {
                     fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
                 }
             } else {
                 g_files_to_copy++;
-                /* Add to queue for parallel copying */
                 if (opt_parallel > 1) {
                     fcp_queue_push(&g_queue, src_path, dst_path, st.st_size);
                 } else {
-                    /* Sequential: copy directly */
                     if (g_progress.enabled) {
                         fcp_progress_update_file(&g_progress, dst_path, st.st_size);
                     }
 
-                    int ret = fcp_copy_file(src_path, dst_path, opt_reflink, opt_dry_run,
+                    int ret = fcp_copy_file(src_path, dst_path, opt_reflink, opt_sparse,
+                                           opt_preserve, opt_atomic, opt_dry_run,
                                            opt_speed_limit, &g_progress);
 
                     if (ret == FCP_COPY_OK) {
@@ -451,6 +494,8 @@ static int copy_directory(const char *src, const char *dst) {
                         if (opt_verbose) {
                             fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
                         }
+                    } else {
+                        g_errors++;
                     }
                 }
             }
@@ -477,8 +522,17 @@ static int copy_directory(const char *src, const char *dst) {
                     unlink(dst_path);
                     if (symlink(target, dst_path) != 0) {
                         fprintf(stderr, "fcp: cannot create symlink '%s': %s\n", dst_path, strerror(errno));
-                    } else if (opt_verbose) {
-                        fprintf(stderr, "fcp: '%s' -> '%s'\n", dst_path, target);
+                        g_errors++;
+                    } else {
+                        if (opt_preserve & FCP_PRESERVE_OWNERSHIP) {
+                            if (lchown(dst_path, st.st_uid, st.st_gid) != 0 && errno != EPERM) {}
+                        }
+                        if (opt_preserve & FCP_PRESERVE_XATTR) {
+                            fcp_copy_xattrs(-1, -1, src_path, dst_path);
+                        }
+                        if (opt_verbose) {
+                            fprintf(stderr, "fcp: '%s' -> '%s'\n", dst_path, target);
+                        }
                     }
                 }
             }
@@ -490,14 +544,24 @@ static int copy_directory(const char *src, const char *dst) {
 
     closedir(dir);
 
-    /* Preserve directory permissions and timestamps */
+    /* Preserve directory permissions, ownership, timestamps, and xattrs */
     struct stat dir_stat;
     if (stat(src, &dir_stat) == 0) {
-        chmod(clean_dst, dir_stat.st_mode);
-        struct timespec dtimes[2];
-        dtimes[0] = dir_stat.st_atim;
-        dtimes[1] = dir_stat.st_mtim;
-        utimensat(AT_FDCWD, clean_dst, dtimes, 0);
+        if (opt_preserve & FCP_PRESERVE_MODE) {
+            chmod(clean_dst, dir_stat.st_mode);
+        }
+        if (opt_preserve & FCP_PRESERVE_OWNERSHIP) {
+            if (chown(clean_dst, dir_stat.st_uid, dir_stat.st_gid) != 0 && errno != EPERM) {}
+        }
+        if (opt_preserve & FCP_PRESERVE_XATTR) {
+            fcp_copy_xattrs(-1, -1, src, clean_dst);
+        }
+        if (opt_preserve & FCP_PRESERVE_TIMESTAMPS) {
+            struct timespec dtimes[2];
+            dtimes[0] = dir_stat.st_atim;
+            dtimes[1] = dir_stat.st_mtim;
+            utimensat(AT_FDCWD, clean_dst, dtimes, 0);
+        }
     }
 
     return 0;
@@ -506,6 +570,10 @@ static int copy_directory(const char *src, const char *dst) {
 int main(int argc, char *argv[]) {
     int opt;
     int option_index = 0;
+
+    /* Install signal handlers */
+    signal(SIGINT, sig_handler);
+    signal(SIGTERM, sig_handler);
 
     /* Load config file */
     fcp_config_defaults(&g_config);
@@ -518,13 +586,27 @@ int main(int argc, char *argv[]) {
 
     opt_parallel = g_config.parallel;
     opt_reflink = g_config.reflink;
+    opt_sparse = g_config.sparse;
+    opt_atomic = g_config.atomic ? 1 : 0;
     opt_speed_limit = g_config.speed_limit;
     opt_verify_hash = g_config.verify_hash ? 1 : 0;
     opt_no_progress = g_config.progress_auto ? 0 : 1;
     opt_no_color = g_config.color_auto ? 0 : 1;
 
-    while ((opt = getopt_long(argc, argv, "rRiInfvdsut:PhV", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "rRiInfvdsut:aPhVp::", long_options, &option_index)) != -1) {
         switch (opt) {
+            case 'a':
+                opt_recursive = 1;
+                opt_dereference = 0;
+                opt_preserve = FCP_PRESERVE_ALL;
+                break;
+            case 'p':
+                if (optarg) {
+                    opt_preserve = parse_preserve_attrs(optarg);
+                } else {
+                    opt_preserve = FCP_PRESERVE_MODE | FCP_PRESERVE_OWNERSHIP | FCP_PRESERVE_TIMESTAMPS;
+                }
+                break;
             case 'r':
             case 'R':
                 opt_recursive = 1;
@@ -598,11 +680,28 @@ int main(int argc, char *argv[]) {
                 if (fcp_config_load(&g_config, optarg) == 0) {
                     opt_parallel = g_config.parallel;
                     opt_reflink = g_config.reflink;
+                    opt_sparse = g_config.sparse;
+                    opt_atomic = g_config.atomic ? 1 : 0;
                     opt_speed_limit = g_config.speed_limit;
                     opt_verify_hash = g_config.verify_hash ? 1 : 0;
                     opt_no_progress = g_config.progress_auto ? 0 : 1;
                     opt_no_color = g_config.color_auto ? 0 : 1;
                 }
+                break;
+            case 1015: /* --sparse */
+                if (strcmp(optarg, "auto") == 0) {
+                    opt_sparse = FCP_SPARSE_AUTO;
+                } else if (strcmp(optarg, "always") == 0) {
+                    opt_sparse = FCP_SPARSE_ALWAYS;
+                } else if (strcmp(optarg, "never") == 0 || strcmp(optarg, "off") == 0) {
+                    opt_sparse = FCP_SPARSE_OFF;
+                } else {
+                    fprintf(stderr, "fcp: invalid sparse mode '%s'\n", optarg);
+                    return 1;
+                }
+                break;
+            case 1016: /* --atomic */
+                opt_atomic = 1;
                 break;
 case 'h':
             print_help(stdout);

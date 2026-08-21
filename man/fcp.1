@@ -1,4 +1,4 @@
-.TH FCP 1 "August 2026" "fcp 1.0.0" "User Commands"
+.TH FCP 1 "August 2026" "fcp 2.0.0" "User Commands"
 .SH NAME
 fcp \- faster copy with progress, identical file detection, and parallelism
 .SH SYNOPSIS
@@ -10,14 +10,26 @@ fcp \- faster copy with progress, identical file detection, and parallelism
 .SH DESCRIPTION
 \fBfcp\fP is a faster replacement for the standard \fBcp\fP command with
 enhanced features including visual progress bars, identical file detection,
-parallel copy support, and more.
+parallel copy support, sparse file acceleration, and more.
 
 It is fully compatible with \fBcp\fP's command-line interface and adds
 several new options for improved functionality.
 
 .SH OPTIONS
 .TP
-\fB\-r\fR, \fB\-\-recursive\fR
+\fB\-a\fR, \fB\-\-archive\fR
+Archive mode. Equivalent to \fB\-d \-r \-\-preserve=all\fR.
+Preserves all file metadata (modes, ownership, timestamps, and extended attributes).
+
+.TP
+\fB\-p\fR, \fB\-\-preserve\fR[=\fIATTR_LIST\fR]
+Preserve specified file attributes. \fIATTR_LIST\fR is a comma-separated
+list of attributes to preserve: \fBmode\fR, \fBownership\fR, \fBtimestamps\fR,
+\fBxattr\fR, or \fBall\fR. If specified without an argument, defaults to
+\fBmode,ownership,timestamps\fR.
+
+.TP
+\fB\-r\fR, \fB\-R\fR, \fB\-\-recursive\fR
 Copy directories recursively.
 
 .TP
@@ -112,6 +124,31 @@ Cap the copy speed. SIZE can be a number with optional suffix:
 .PP
 Example: \fB\-\-speed\-limit=50M\fR limits copy speed to 50 MB/s.
 .RE
+
+.TP
+\fB\-\-sparse=\fI[auto|always|never]\fR
+Control sparse file copying. When active, fcp detects filesystem holes using
+the \fBSEEK_DATA\fR and \fBSEEK_HOLE\fR extent search, copying only allocated
+data blocks and skipping holes without writing zeros to disk.
+.RS 4
+.PP
+\fBauto\fR (default): Automatically detect sparse files if allocated blocks
+are smaller than logical file size.
+.PP
+\fBalways\fR: Always treat source as sparse and seek data extents.
+.PP
+\fBnever\fR: Disable sparse copy optimization.
+.RE
+
+.TP
+\fB\-\-atomic\fR
+Atomically replace the destination file upon completion. The copy is written
+to a hidden temporary file in the destination directory, flushed with \fBfdatasync()\fR,
+and swapped via \fBrename()\fR.
+
+.TP
+\fB\-\-exclude=\fIPATTERN\fR
+Exclude files matching the specified shell glob PATTERN. Can be given multiple times.
 
 .TP
 \fB\-\-no\-color\fR

@@ -1,3 +1,12 @@
+fcp (2.0.0-1) unstable; urgency=medium
+
+  * Major release v2.0.0.
+  * Added sparse file acceleration (--sparse=auto|always|never).
+  * Added archive mode (-a) and metadata/xattr preservation (-p, --preserve).
+  * Added atomic replacement mode (--atomic).
+
+ -- Kim Schulz <kim@schulz.dk>  Fri, 21 Aug 2026 21:00:00 +0200
+
 fcp (1.0.0-1) unstable; urgency=medium
 
   * Initial release.

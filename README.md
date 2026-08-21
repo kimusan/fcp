@@ -1,13 +1,16 @@
 # fcp - Faster CP
 
-A faster replacement for the classic `cp` command with modern features including visual progress bars, identical file detection, parallel copy support, and more.
+A faster replacement for the classic `cp` command with modern features including visual progress bars, identical file detection, parallel copy support, sparse file acceleration, metadata/archive preservation, and atomic file replacement.
 
 ## Features
 
 - **Progress bar**: Visual progress with ETA, speed, and file info
 - **Identical file detection**: Skips files that are already copied (rsync-style: size+mtime + optional SHA256)
 - **Parallel copy**: Multiple worker threads for faster bulk transfers
-- **Reflink support**: Instant copies on Btrfs/XFS filesystems
+- **Sparse file acceleration**: Linux `SEEK_DATA`/`SEEK_HOLE` extent copying without writing zero-blocks to disk
+- **Archive & metadata mode**: Full preservation of permissions, ownership, timestamps, and extended attributes (`xattrs`)
+- **Atomic copy mode**: Crash-resilient staging with `fdatasync()` and atomic `rename()` replacement
+- **Reflink support**: Instant copies on Btrfs/XFS filesystems via FICLONE
 - **Speed limiting**: Cap copy bandwidth with `--speed-limit`
 - **Dry-run mode**: Preview what would be copied without copying
 - **Colored output**: Visual feedback with ANSI colors (auto-detected)
@@ -34,7 +37,7 @@ sudo make install
 
 ```bash
 make deb
-sudo dpkg -i fcp_1.0.0_amd64.deb
+sudo dpkg -i fcp_2.0.0_amd64.deb
 ```
 
 ### Dependencies
@@ -51,8 +54,14 @@ sudo dpkg -i fcp_1.0.0_amd64.deb
 # Basic copy
 fcp source.txt destination.txt
 
-# Recursive copy with progress
-fcp -r photos/ ~/backup/photos/
+# Archive copy (recursive, preserve mode, ownership, timestamps, xattrs)
+fcp -a src_dir/ ~/backup/
+
+# Sparse file copy (skips holes in VM images / disk files)
+fcp --sparse=auto disk.raw /mnt/backup/disk.raw
+
+# Atomic replacement (guarantees readers never see partial copies)
+fcp --atomic new_config.json /etc/app/config.json
 
 # Parallel copy (4 workers)
 fcp --parallel=4 documents/ backup/documents/
@@ -73,6 +82,8 @@ fcp -f important.txt ~/backup/important.txt
 
 | Option | Description |
 |--------|-------------|
+| `-a, --archive` | Archive mode: same as `-d -r --preserve=all` |
+| `-p, --preserve[=ATTRS]` | Preserve specified attributes (`mode,ownership,timestamps,xattr,all`) |
 | `-r, -R, --recursive` | Copy directories recursively |
 | `-i, --interactive` | Prompt before overwrite |
 | `-n, --no-clobber` | Do not overwrite existing files |
@@ -90,6 +101,8 @@ fcp -f important.txt ~/backup/important.txt
 | `-P, --progress` | auto | Show progress bar |
 | `--no-progress` | - | Disable progress display |
 | `--parallel=[N\|auto]` | auto | Parallel copy workers (default: nproc, max 8) |
+| `--sparse=[auto\|always\|never]` | auto | Detect & accelerate sparse file copying |
+| `--atomic` | off | Atomically replace destination via temp file + rename |
 | `--exclude=PATTERN` | - | Exclude files matching PATTERN (glob, can be repeated) |
 | `--verify-hash` | off | Use SHA256 for identical detection |
 | `--reflink=[auto\|always\|never]` | auto | Use reflink (FICLONE) when supported |
@@ -125,6 +138,12 @@ verbose = auto
 # Reflink mode: auto=use when supported, never=disable
 reflink = auto
 
+# Sparse copy mode: auto=detect sparse, always=force sparse, off=disable
+sparse = auto
+
+# Atomic copy mode: on=atomic replacement, off=direct write
+atomic = off
+
 # Speed limit (e.g., 50M, 1G)
 speed_limit =
 ```
@@ -147,6 +166,7 @@ This approach balances speed and accuracy, similar to rsync's strategy.
 `fcp` is optimized for speed through several mechanisms:
 
 - **copy_file_range()**: Zero-copy transfers on Linux 4.5+
+- **Sparse copy**: Extent-based zero-I/O skipping with `SEEK_DATA`/`SEEK_HOLE`
 - **Parallel workers**: Multiple threads for concurrent file copies
 - **Reflinks**: Instant copies on Btrfs/XFS via FICLONE
 - **Large buffers**: 1MB copy buffers reduce syscall overhead
@@ -193,8 +213,14 @@ make clean        # Clean build artifacts
 # Test basic copy
 ./fcp test.txt /tmp/test_copy.txt
 
-# Test recursive copy
-./fcp -r src_dir/ /tmp/dst_dir/
+# Test recursive archive copy
+./fcp -a src_dir/ /tmp/dst_dir/
+
+# Test sparse copy
+./fcp --sparse=auto disk.img /tmp/disk_copy.img
+
+# Test atomic copy
+./fcp --atomic test.txt /tmp/test_copy.txt
 
 # Test parallel copy
 ./fcp --parallel=4 src_dir/ /tmp/dst_dir/
@@ -218,9 +244,9 @@ Contributions are welcome! Please:
 - [x] `--exclude` pattern filtering (like rsync)
 - [x] Full CLI options & standard `cp` compatibility
 - [x] High-performance direct FICLONE reflink
-- [ ] Sparse file acceleration (`--sparse=auto|always|never`) with `SEEK_HOLE`/`SEEK_DATA` (v2.0)
-- [ ] Full metadata preservation & archive mode (`-a, --archive` / `-p, --preserve`) (v2.0)
-- [ ] Atomic copy mode (`--atomic`) via temporary swap (v2.0)
+- [x] Sparse file acceleration (`--sparse=auto|always|never`) with `SEEK_HOLE`/`SEEK_DATA` (v2.0)
+- [x] Full metadata preservation & archive mode (`-a, --archive` / `-p, --preserve`) (v2.0)
+- [x] Atomic copy mode (`--atomic`) via temporary staging + `rename()` (v2.0)
 - [ ] Backup modes (`--backup`, `--suffix`)
 - [ ] Compression support (zstd, lz4)
 - [ ] Network copy support (via SSH)

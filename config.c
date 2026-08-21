@@ -23,6 +23,8 @@ void fcp_config_defaults(fcp_config_t *config) {
     config->verify_hash = false;
     config->verbose_auto = true;
     config->reflink = 1; /* auto */
+    config->sparse = 1;  /* auto */
+    config->atomic = false;
     config->speed_limit = 0;
     strcpy(config->config_path, "");
 }
@@ -103,6 +105,20 @@ int fcp_config_load(fcp_config_t *config, const char *path) {
                 config->reflink = 2;
             } else if (strcmp(value, "never") == 0 || strcmp(value, "off") == 0) {
                 config->reflink = 0;
+            }
+        } else if (strcmp(key, "sparse") == 0) {
+            if (strcmp(value, "always") == 0) {
+                config->sparse = 2;
+            } else if (strcmp(value, "never") == 0 || strcmp(value, "off") == 0) {
+                config->sparse = 0;
+            } else {
+                config->sparse = 1;
+            }
+        } else if (strcmp(key, "atomic") == 0) {
+            if (strcmp(value, "on") == 0 || strcmp(value, "true") == 0 || strcmp(value, "1") == 0) {
+                config->atomic = true;
+            } else {
+                config->atomic = false;
             }
         } else if (strcmp(key, "speed_limit") == 0) {
             /* Parse size string */

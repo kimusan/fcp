@@ -18,6 +18,8 @@ typedef struct {
     bool verify_hash;    /* true = always verify with SHA256 */
     bool verbose_auto;   /* true = auto-detect, false = explicit off */
     int reflink;         /* 0 = off, 1 = auto, 2 = always */
+    int sparse;          /* 0 = off, 1 = auto, 2 = always */
+    bool atomic;         /* true = atomic replacement */
     uint64_t speed_limit; /* 0 = no limit */
     char config_path[1024]; /* Path to config file */
 } fcp_config_t;

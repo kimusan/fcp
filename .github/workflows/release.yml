@@ -72,11 +72,50 @@ jobs:
           mv ../fcp_${VERSION}-1_${{ matrix.deb-arch }}.deb \
              fcp_${VERSION}_${{ matrix.deb-arch }}.deb
 
+      - name: Build RPM package
+        if: matrix.arch == 'amd64'
+        run: |
+          set -e
+          VERSION=$(./fcp --version | awk '{print $2}')
+          echo "Building fcp version $VERSION RPM"
+          # Install RPM build tools
+          sudo apt-get install -y rpm rpmbuild
+          # Setup RPM build environment
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          # Create source tarball
+          tar -czf ~/rpmbuild/SOURCES/fcp-${VERSION}.tar.gz \
+            --transform 's,^,fcp-${VERSION}/,' \
+            Makefile fcp.c util.c copy.c identical.c hash.c progress.c colors.c queue.c config.c \
+            fcp.h util.h copy.h identical.h hash.h progress.h colors.h queue.h config.h \
+            fcp.spec man/fcp.1
+          # Build RPM
+          rpmbuild -bb fcp.spec --define "_topdir $(pwd)/rpmbuild"
+          # Move RPMs to current directory
+          ls -la rpmbuild/RPMS/*/fcp-${VERSION}*.rpm
+          mv rpmbuild/RPMS/*/fcp-${VERSION}*.rpm . 2>/dev/null || \
+          mv rpmbuild/RPMS/noarch/fcp-${VERSION}*.rpm . 2>/dev/null || \
+          mv rpmbuild/RPMS/x86_64/fcp-${VERSION}*.rpm . 2>/dev/null || \
+          echo "RPM not found in expected location"
+
+      - name: Build PKGEXT package (Arch Linux)
+        if: matrix.arch == 'amd64'
+        run: |
+          set -e
+          VERSION=$(./fcp --version | awk '{print $2}')
+          echo "Building fcp version $VERSION PKGEXT"
+          # Install packer/pacman if needed
+          sudo apt-get install -y pacutils
+          # Build PKGEXT
+          makepkg --noconfirm --skippgpcheck
+          # Rename to include version
+          ls -la *.pkg.tar.*
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            fcp_*.tar.gz
             fcp_*.deb
+            fcp-*.rpm
+            *.pkg.tar.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

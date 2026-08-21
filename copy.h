@@ -27,7 +27,4 @@ typedef struct fcp_progress_s fcp_progress_t;
 int fcp_copy_file(const char *src, const char *dst, int reflink_mode, bool dry_run,
                   uint64_t speed_limit, fcp_progress_t *progress);
 
-/* Check if reflink (FICLONE) is supported on the destination filesystem */
-int fcp_supports_reflink(const char *path);
-
 #endif /* FCP_COPY_H */

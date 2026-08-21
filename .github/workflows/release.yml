@@ -17,7 +17,7 @@ jobs:
             ubuntu: '24.04'
           - arch: arm64
             deb-arch: arm64
-            ubuntu: '22.04'
+            ubuntu: '24.04'
     runs-on: ubuntu-${{ matrix.ubuntu }}
 
     steps:
@@ -40,6 +40,9 @@ jobs:
           set -e
           echo "Adding arm64 architecture..."
           sudo dpkg --add-architecture arm64
+          echo "Adding ports mirror for arm64..."
+          echo "deb http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64-security.list
+          echo "deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64-updates.list
           echo "Updating package lists..."
           sudo apt-get update
           echo "Installing cross-compilation tools..."

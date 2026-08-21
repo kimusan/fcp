@@ -28,6 +28,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential debhelper devscripts libssl-dev
+          # Verify dch is available
+          which dch || echo "WARNING: dch not found in PATH"
 
       - name: Install cross-compilation tools
         if: matrix.arch != 'amd64'
@@ -52,14 +54,18 @@ jobs:
 
       - name: Build deb package
         run: |
+          set -e
           VERSION=$(./fcp --version | awk '{print $2}')
+          echo "Building fcp version $VERSION for ${{ matrix.arch }}"
           # Update changelog
-          dch --local ~github --distribution unstable "Automated build from $GITHUB_SHA for ${{ matrix.arch }}"
+          dch --local ~github --distribution unstable "Automated build from $GITHUB_SHA for ${{ matrix.arch }}" || true
           # Build deb
-          dpkg-buildpackage -us -uc -b -d
+          dpkg-buildpackage -us -uc -b -d || { echo "dpkg-buildpackage failed"; exit 1; }
+          # List built packages
+          ls -la ../*.deb
           # Rename to include arch
           mv ../fcp_${VERSION}-1_${{ matrix.deb-arch }}.deb \
-             fcp_${VERSION}_${{ matrix.deb-arch }}.deb
+             fcp_${VERSION}_${{ matrix.deb-arch }}.deb || { echo "Failed to rename deb"; ls -la ../*.deb; exit 1; }
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v1

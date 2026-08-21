@@ -87,7 +87,7 @@ static const struct option long_options[] = {
     {"no-color",       0, NULL, 1010},
     {"config",         required_argument, NULL, 1011},
     {"help",           0, NULL, 1012},
-    {"version",        0, NULL, 1013},
+    {"version",        'V', NULL, 1013},
     {"exclude",        required_argument, NULL, 1014},
     {NULL, 0, NULL, 0}
 };
@@ -96,12 +96,12 @@ static void print_version(void) {
     printf("fcp %s\n", FCP_VERSION);
 }
 
-static void print_usage(FILE *fp) {
+static void print_help(FILE *fp) {
     fprintf(fp,
         "Usage: fcp [OPTION]... SOURCE DESTINATION\n"
         "       fcp [OPTION]... SOURCE... DIRECTORY\n"
         "\n"
-        "fcp - Faster CP with progress, identical file detection, and parallelism\n"
+        "fcp %s - Faster CP with progress, identical file detection, and parallelism\n"
         "\n"
         "Basic options:\n"
         "  -r, --recursive          Copy directories recursively\n"
@@ -124,8 +124,8 @@ static void print_usage(FILE *fp) {
         "      --dry-run            Preview without copying\n"
         "      --speed-limit=SIZE   Cap copy speed (e.g., 10M, 1G)\n"
         "      --no-color           Disable colored output\n"
+        "  -V, --version            Show version information\n"
         "  -h, --help               Show this help message\n"
-        "      --version            Show version information\n"
         "\n"
         "Examples:\n"
         "  fcp source.txt destination.txt          Copy a file\n"
@@ -134,8 +134,8 @@ static void print_usage(FILE *fp) {
         "  fcp --dry-run -r dir1/ dir2/            Preview what would be copied\n"
         "  fcp --speed-limit=50M large_file.bin    Copy with 50MB/s speed limit\n"
         "\n"
-        "Report bugs to: kim@schulz.dk\n"
-    );
+        "Report bugs to: kim@schulz.dk\n",
+        FCP_VERSION);
 }
 
 /* Handle overwrite policy and identical file detection for a single file */
@@ -415,7 +415,7 @@ int main(int argc, char *argv[]) {
         fcp_config_load(&g_config, config_path);
     }
 
-    while ((opt = getopt_long(argc, argv, "riIffvdst:PRh", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "riIffvdst:PRhV", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'r':
                 opt_recursive = 1;
@@ -489,29 +489,32 @@ int main(int argc, char *argv[]) {
             case 1011: /* --config */
                 fcp_config_load(&g_config, optarg);
                 break;
-            case 'h':
-                print_usage(stdout);
-                return 0;
-            case 1012: /* --help */
-                print_usage(stdout);
-                return 0;
-            case 1013: /* --version */
-                print_version();
-                return 0;
+case 'h':
+            print_help(stdout);
+            return 0;
+        case 'V':
+            print_version();
+            return 0;
+        case 1012: /* --help */
+            print_help(stdout);
+            return 0;
+        case 1013: /* --version */
+            print_version();
+            return 0;
             case 1014: /* --exclude */
                 if (opt_num_excludes < FCP_MAX_EXCLUDES) {
                     opt_excludes[opt_num_excludes++] = optarg;
                 }
                 break;
             default:
-                print_usage(stderr);
+                print_help(stderr);
                 return 1;
         }
     }
 
     if (optind >= argc) {
         fprintf(stderr, "fcp: missing file operand\n");
-        print_usage(stderr);
+        print_help(stderr);
         return 1;
     }
 
@@ -519,7 +522,7 @@ int main(int argc, char *argv[]) {
     if (optind + 1 >= argc && !opt_target_dir) {
         if (!opt_recursive) {
             fprintf(stderr, "fcp: missing destination operand\n");
-            print_usage(stderr);
+            print_help(stderr);
             return 1;
         }
     }

@@ -1,0 +1,70 @@
+name: Build and Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            deb-arch: amd64
+          - arch: arm64
+            deb-arch: arm64
+          - arch: armhf
+            deb-arch: armhf
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential debhelper libssl-dev
+
+      - name: Install cross-compilation tools
+        if: matrix.arch != 'amd64'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
+      - name: Build binary
+        env:
+          CC: ${{ matrix.arch == 'amd64' && 'gcc' || (matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'arm-linux-gnueabihf-gcc') }}
+          CFLAGS: '-O2 -Wall -Wextra -std=gnu11'
+        run: |
+          make clean
+          make
+
+      - name: Create tarball
+        run: |
+          VERSION=$(./fcp --version | awk '{print $2}')
+          tar -czf fcp_${VERSION}_Linux_${{ matrix.arch }}.tar.gz \
+            fcp \
+            man/fcp.1
+
+      - name: Build deb package
+        run: |
+          VERSION=$(./fcp --version | awk '{print $2}')
+          # Update changelog
+          dch --local ~github --distribution unstable "Automated build from $GITHUB_SHA for ${{ matrix.arch }}"
+          # Build deb
+          dpkg-buildpackage -us -uc -b -d
+          # Rename to include arch
+          mv ../fcp_${VERSION}-1_${{ matrix.deb-arch }}.deb \
+             fcp_${VERSION}_${{ matrix.deb-arch }}.deb
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            fcp_*.tar.gz
+            fcp_*.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

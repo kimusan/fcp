@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential debhelper libssl-dev
+          sudo apt-get install -y build-essential debhelper devscripts libssl-dev
 
       - name: Install cross-compilation tools
         if: matrix.arch != 'amd64'
@@ -55,16 +55,10 @@ jobs:
           set -e
           VERSION=$(./fcp --version | awk '{print $2}')
           echo "Building fcp version $VERSION for ${{ matrix.arch }}"
-          # Manually update changelog (dch may not be available)
-          echo "fcp ($VERSION-1) unstable; urgency=medium" >> debian/changelog
-          echo "" >> debian/changelog
-          echo "  * Automated build from $GITHUB_SHA for ${{ matrix.arch }}" >> debian/changelog
-          echo "" >> debian/changelog
-          echo " -- Kim Schulz <kim@schulz.dk>  $(date -R)" >> debian/changelog
+          # Update changelog
+          dch --local ~github --distribution unstable "Automated build from $GITHUB_SHA for ${{ matrix.arch }}"
           # Build deb
           dpkg-buildpackage -us -uc -b -d
-          # List built packages
-          ls -la ../*.deb
           # Rename to include arch
           mv ../fcp_${VERSION}-1_${{ matrix.deb-arch }}.deb \
              fcp_${VERSION}_${{ matrix.deb-arch }}.deb

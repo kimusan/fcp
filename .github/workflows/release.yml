@@ -27,7 +27,12 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
+          echo "Installing packages for ${{ matrix.arch }}..."
           sudo apt-get install -y build-essential debhelper devscripts libssl-dev
+          echo "Verifying installation..."
+          dpkg -l | grep -E "debhelper|devscripts" || echo "WARNING: packages not found in dpkg"
+          which dch && echo "dch found" || echo "dch NOT found"
+          which dh && echo "dh found" || echo "dh NOT found"
 
       - name: Install cross-compilation tools
         if: matrix.arch != 'amd64'
@@ -40,8 +45,13 @@ jobs:
           CC: ${{ matrix.arch == 'amd64' && 'gcc' || (matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'arm-linux-gnueabihf-gcc') }}
           CFLAGS: '-O2 -Wall -Wextra -std=gnu11'
         run: |
+          set -e
+          echo "Building for ${{ matrix.arch }} with $CC..."
           make clean
           make
+          echo "Binary built successfully"
+          ls -la fcp
+          file fcp || true
 
       - name: Create tarball
         run: |

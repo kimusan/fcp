@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 /* Scanning/copy phase */
 typedef enum {
@@ -22,6 +23,7 @@ typedef enum {
 typedef struct fcp_progress_s {
     bool enabled;
     bool active;
+    pthread_mutex_t mutex;
 
     /* Current phase */
     fcp_phase_t phase;

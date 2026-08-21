@@ -26,6 +26,7 @@
 #include <dirent.h>
 #include <libgen.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 
 #define FCP_VERSION "1.0.0"
 
@@ -60,12 +61,13 @@ static fcp_queue_t g_queue;
 static pthread_t *g_workers = NULL;
 static int g_num_workers = 0;
 
-/* Scanning counter */
-static int g_files_scanned = 0;
-static int g_files_to_copy = 0;
-static int g_files_skipped = 0;
-static uint64_t g_bytes_skipped = 0;
-static uint64_t g_bytes_total = 0;
+/* Scanning counter and error tracking (atomic for thread safety) */
+static atomic_int g_files_scanned = 0;
+static atomic_int g_files_to_copy = 0;
+static atomic_int g_files_skipped = 0;
+static atomic_uint_least64_t g_bytes_skipped = 0;
+static atomic_uint_least64_t g_bytes_total = 0;
+static atomic_int g_errors = 0;
 
 /* Configuration */
 static fcp_config_t g_config;
@@ -218,13 +220,17 @@ static int handle_overwrite(const char *src, const char *dst) {
 /* Copy a single file */
 static int copy_single_file(const char *src, const char *dst) {
     int allow = handle_overwrite(src, dst);
-    if (allow < 0) return -1;
+    if (allow < 0) {
+        g_errors++;
+        return -1;
+    }
     if (allow == 0) return 0;
 
     if (opt_symbolic) {
         unlink(dst);
         if (symlink(src, dst) != 0) {
             fprintf(stderr, "fcp: cannot create symlink '%s' -> '%s': %s\n", dst, src, strerror(errno));
+            g_errors++;
             return -1;
         }
         if (opt_verbose) {
@@ -254,6 +260,8 @@ static int copy_single_file(const char *src, const char *dst) {
         if (opt_verbose) {
             fprintf(stderr, "fcp: skipped identical '%s'\n", src);
         }
+    } else {
+        g_errors++;
     }
 
     return (ret == FCP_COPY_OK) ? 0 : (ret == FCP_COPY_SKIP) ? 0 : -1;
@@ -273,6 +281,8 @@ static void *worker_thread(void *arg) {
                 if (g_progress.enabled) {
                     g_progress.total_done += item.size;
                 }
+            } else {
+                g_errors++;
             }
             free(item.src);
             free(item.dst);
@@ -283,6 +293,7 @@ static void *worker_thread(void *arg) {
             unlink(item.dst);
             if (symlink(item.src, item.dst) != 0) {
                 fprintf(stderr, "fcp: cannot create symlink '%s' -> '%s': %s\n", item.dst, item.src, strerror(errno));
+                g_errors++;
             } else if (opt_verbose) {
                 fprintf(stderr, "fcp: '%s' -> '%s'\n", item.dst, item.src);
             }
@@ -311,6 +322,8 @@ static void *worker_thread(void *arg) {
             if (opt_verbose) {
                 fprintf(stderr, "fcp: skipped identical '%s'\n", item.src);
             }
+        } else {
+            g_errors++;
         }
 
         free(item.src);
@@ -786,7 +799,10 @@ case 'h':
             }
 
             struct stat st;
-            if (stat(src, &st) == 0) {
+            if (lstat(src, &st) != 0) {
+                fprintf(stderr, "fcp: cannot stat '%s': %s\n", src, strerror(errno));
+                g_errors++;
+            } else {
                 if (g_num_workers > 1) {
                     fcp_queue_push(&g_queue, src, final_dst, st.st_size);
                 } else {
@@ -815,5 +831,5 @@ cleanup:
     }
     fcp_queue_cleanup(&g_queue);
 
-    return 0;
+    return (g_errors > 0) ? 1 : 0;
 }

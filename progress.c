@@ -48,17 +48,21 @@ void fcp_progress_init(fcp_progress_t *progress, bool enabled) {
     progress->phase = FCP_PHASE_IDLE;
     progress->start_time = clock_gettime_sec();
     progress->last_update_time = progress->start_time;
+    pthread_mutex_init(&progress->mutex, NULL);
 }
 
 void fcp_progress_banner(fcp_progress_t *progress, const char *src, const char *dst) {
     if (!progress->enabled) return;
 
+    pthread_mutex_lock(&progress->mutex);
     fprintf(stderr, COLOR_BOLD "fcp" COLOR_RESET ": copying" COLOR_CYAN " %s" COLOR_RESET
             " -> " COLOR_CYAN " %s" COLOR_RESET "\n", src, dst);
     fflush(stderr);
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan) {
+    pthread_mutex_lock(&progress->mutex);
     progress->phase = FCP_PHASE_SCANNING;
     progress->active = true;
     progress->files_scanned = 0;
@@ -68,9 +72,11 @@ void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan) {
     progress->total_done = 0;
     progress->total_all = 0;
     progress->last_update_time = 0; /* Force first render */
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uint64_t bytes_processed, int files_skipped, uint64_t total_bytes_found) {
+    pthread_mutex_lock(&progress->mutex);
     progress->files_scanned = files_found;
     progress->files_skipped_identical = files_skipped;
     /* bytes_processed is the current total of skipped bytes (not incremental) */
@@ -79,50 +85,50 @@ void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uin
     if (total_bytes_found > progress->total_all) {
         progress->total_all = total_bytes_found;
     }
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int files_to_copy) {
+    pthread_mutex_lock(&progress->mutex);
     progress->files_skipped_identical = files_skipped;
     progress->files_to_copy = files_to_copy;
     progress->phase = FCP_PHASE_COPYING;
     progress->last_update_time = 0; /* Force first render in copy phase */
 
-    if (!progress->enabled) return;
-
-    /* Move to new line after scanning info */
-    fprintf(stderr, "\n");
-    fprintf(stderr, "  %d files to copy" COLOR_GRAY", %d identical skipped" COLOR_RESET "\n",
-            files_to_copy, files_skipped);
-    fflush(stderr);
+    if (progress->enabled) {
+        /* Move to new line after scanning info */
+        fprintf(stderr, "\n");
+        fprintf(stderr, "  %d files to copy" COLOR_GRAY", %d identical skipped" COLOR_RESET "\n",
+                files_to_copy, files_skipped);
+        fflush(stderr);
+    }
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_update_file(fcp_progress_t *progress, const char *file, uint64_t total) {
+    pthread_mutex_lock(&progress->mutex);
     progress->current_file = file;
     progress->current_done = 0;
     progress->current_total = total;
     progress->active = true;
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_update_done(fcp_progress_t *progress, uint64_t bytes) {
+    pthread_mutex_lock(&progress->mutex);
     progress->current_done += bytes;
-
-    /* Update overall stats */
-    if (progress->current_done >= progress->current_total && progress->current_total > 0) {
-        /* File just completed */
-        progress->total_done += progress->current_total;
-        progress->current_done = 0;
-        progress->current_total = 0;
-        progress->current_file = NULL;
-    }
+    progress->total_done += bytes;
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_complete_file(fcp_progress_t *progress) {
+    pthread_mutex_lock(&progress->mutex);
     if (progress->current_file) {
-        progress->total_done += progress->current_done;
         progress->current_done = 0;
         progress->current_total = 0;
         progress->current_file = NULL;
     }
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_render(fcp_progress_t *progress) {
@@ -130,10 +136,13 @@ void fcp_progress_render(fcp_progress_t *progress) {
         return;
     }
 
+    pthread_mutex_lock(&progress->mutex);
+
     /* Throttle rendering */
     double now = clock_gettime_sec();
     double render_interval = (progress->phase == FCP_PHASE_SCANNING) ? 0.5 : 0.1;
     if (progress->last_update_time > 0 && now - progress->last_update_time < render_interval) {
+        pthread_mutex_unlock(&progress->mutex);
         return;
     }
     progress->last_update_time = now;
@@ -166,6 +175,7 @@ void fcp_progress_render(fcp_progress_t *progress) {
             fprintf(stderr, COLOR_CYAN "%s" COLOR_RESET, format_size(progress->total_all));
         }
         fflush(stderr);
+        pthread_mutex_unlock(&progress->mutex);
         return;
     }
 
@@ -175,7 +185,7 @@ void fcp_progress_render(fcp_progress_t *progress) {
     }
 
     if (progress->total_all > 0 && progress->speed > 0) {
-        uint64_t remaining = progress->total_all - progress->total_done;
+        uint64_t remaining = (progress->total_all > progress->total_done) ? (progress->total_all - progress->total_done) : 0;
         progress->eta = (double)remaining / progress->speed;
     } else {
         progress->eta = 0;
@@ -240,16 +250,21 @@ void fcp_progress_render(fcp_progress_t *progress) {
     }
 
     fflush(stderr);
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_summary(fcp_progress_t *progress) {
     if (!progress->enabled) return;
 
+    pthread_mutex_lock(&progress->mutex);
     /* Ensure progress bar shows 100% before summary */
     progress->total_done = progress->total_all;
+    pthread_mutex_unlock(&progress->mutex);
+
     fcp_progress_render(progress);
     fprintf(stderr, "\n");
 
+    pthread_mutex_lock(&progress->mutex);
     double elapsed = clock_gettime_sec() - progress->start_time;
 
     fprintf(stderr, "\r" COLOR_BOLD "fcp" COLOR_RESET ": done" COLOR_GRAY
@@ -263,6 +278,7 @@ void fcp_progress_summary(fcp_progress_t *progress) {
 
     fprintf(stderr, "\n");
     fflush(stderr);
+    pthread_mutex_unlock(&progress->mutex);
 }
 
 void fcp_progress_cleanup(fcp_progress_t *progress) {
@@ -271,4 +287,5 @@ void fcp_progress_cleanup(fcp_progress_t *progress) {
         fprintf(stderr, "\r\033[K\n");
         fflush(stderr);
     }
+    pthread_mutex_destroy(&progress->mutex);
 }

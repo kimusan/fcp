@@ -15,9 +15,9 @@
 #include <errno.h>
 #include <limits.h>
 
-/* Internal buffers for format functions (thread-safe enough for single-threaded progress) */
-static char size_buf[32];
-static char speed_buf[32];
+/* Internal buffers for format functions (thread-safe with thread-local storage) */
+static __thread char size_buf[32];
+static __thread char speed_buf[32];
 
 const char *format_size(uint64_t bytes) {
     if (bytes >= 1024ULL * 1024 * 1024 * 1024) {

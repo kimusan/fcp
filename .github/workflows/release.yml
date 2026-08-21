@@ -40,9 +40,17 @@ jobs:
           set -e
           echo "Adding arm64 architecture..."
           sudo dpkg --add-architecture arm64
-          echo "Adding ports mirror for arm64..."
-          echo "deb http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64-security.list
-          echo "deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64-updates.list
+          echo "Configuring sources for arm64..."
+          # Remove conflicting sources that try to fetch arm64 from main mirror
+          sudo rm -f /etc/apt/sources.list.d/*.list
+          # Add ports mirror for arm64 (this is the correct mirror for non-amd64)
+          cat <<EOF | sudo tee /etc/apt/sources.list.d/arm64.sources
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports/
+          Suites: noble noble-security noble-updates
+          Components: main restricted universe multiverse
+          Architectures: arm64
+          EOF
           echo "Updating package lists..."
           sudo apt-get update
           echo "Installing cross-compilation tools..."

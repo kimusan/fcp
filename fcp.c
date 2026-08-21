@@ -25,6 +25,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <libgen.h>
+#include <fcntl.h>
 
 #define FCP_VERSION "1.0.0"
 
@@ -440,17 +441,31 @@ static int copy_directory(const char *src, const char *dst) {
                     }
                 }
             }
-        } else if (S_ISLNK(st.st_mode) && opt_dereference) {
-            char resolved[1024];
-            ssize_t rlen = readlink(src_path, resolved, sizeof(resolved) - 1);
-            if (rlen >= 0) {
-                resolved[rlen] = '\0';
+        } else if (S_ISLNK(st.st_mode)) {
+            if (opt_dereference) {
                 struct stat res_stat;
-                if (lstat(resolved, &res_stat) == 0) {
+                if (stat(src_path, &res_stat) == 0) {
                     if (S_ISDIR(res_stat.st_mode)) {
-                        copy_directory(resolved, dst_path);
+                        copy_directory(src_path, dst_path);
                     } else if (S_ISREG(res_stat.st_mode)) {
-                        fcp_queue_push(&g_queue, resolved, dst_path, res_stat.st_size);
+                        if (opt_parallel > 1) {
+                            fcp_queue_push(&g_queue, src_path, dst_path, res_stat.st_size);
+                        } else {
+                            copy_single_file(src_path, dst_path);
+                        }
+                    }
+                }
+            } else {
+                /* Copy symlink directly */
+                char target[4096];
+                ssize_t len = readlink(src_path, target, sizeof(target) - 1);
+                if (len >= 0) {
+                    target[len] = '\0';
+                    unlink(dst_path);
+                    if (symlink(target, dst_path) != 0) {
+                        fprintf(stderr, "fcp: cannot create symlink '%s': %s\n", dst_path, strerror(errno));
+                    } else if (opt_verbose) {
+                        fprintf(stderr, "fcp: '%s' -> '%s'\n", dst_path, target);
                     }
                 }
             }
@@ -461,6 +476,17 @@ static int copy_directory(const char *src, const char *dst) {
     }
 
     closedir(dir);
+
+    /* Preserve directory permissions and timestamps */
+    struct stat dir_stat;
+    if (stat(src, &dir_stat) == 0) {
+        chmod(clean_dst, dir_stat.st_mode);
+        struct timespec dtimes[2];
+        dtimes[0] = dir_stat.st_atim;
+        dtimes[1] = dir_stat.st_mtim;
+        utimensat(AT_FDCWD, clean_dst, dtimes, 0);
+    }
+
     return 0;
 }
 

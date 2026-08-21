@@ -14,13 +14,8 @@ jobs:
         include:
           - arch: amd64
             deb-arch: amd64
-            ubuntu: '24.04'
           - arch: arm64
             deb-arch: arm64
-            ubuntu: '24.04'
-          - arch: armhf
-            deb-arch: armhf
-            ubuntu: '22.04'
     runs-on: ubuntu-${{ matrix.ubuntu }}
 
     steps:
@@ -38,12 +33,11 @@ jobs:
           which dh && echo "dh found" || echo "dh NOT found"
 
       - name: Install cross-compilation tools
-        if: matrix.arch != 'amd64'
+        if: matrix.arch == 'arm64'
         run: |
-          sudo dpkg --add-architecture ${{ matrix.arch }}
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y gcc-${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu' || 'arm-linux-gnueabihf' }}
-          sudo apt-get install -y libssl-dev:${{ matrix.arch }}
+          sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
 
       - name: Build binary
         env:

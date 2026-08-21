@@ -73,7 +73,6 @@ jobs:
              fcp_${VERSION}_${{ matrix.deb-arch }}.deb
 
       - name: Build RPM package
-        if: matrix.arch == 'amd64'
         run: |
           set -e
           VERSION=$(./fcp --version | awk '{print $2}')
@@ -95,10 +94,10 @@ jobs:
           mv rpmbuild/RPMS/*/fcp-${VERSION}*.rpm . 2>/dev/null || \
           mv rpmbuild/RPMS/noarch/fcp-${VERSION}*.rpm . 2>/dev/null || \
           mv rpmbuild/RPMS/x86_64/fcp-${VERSION}*.rpm . 2>/dev/null || \
+          mv rpmbuild/RPMS/aarch64/fcp-${VERSION}*.rpm . 2>/dev/null || \
           echo "RPM not found in expected location"
 
       - name: Build PKGEXT package (Arch Linux)
-        if: matrix.arch == 'amd64'
         run: |
           set -e
           VERSION=$(./fcp --version | awk '{print $2}')

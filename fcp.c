@@ -31,9 +31,12 @@
 /* Global options */
 static int opt_recursive = 0;
 static int opt_interactive = 0;
+static int opt_no_clobber = 0;
 static int opt_force = 0;
 static int opt_verbose = 0;
 static int opt_dereference = 0;
+static int opt_symbolic = 0;
+static int opt_update = 0;
 static int opt_dry_run = 0;
 static int opt_parallel = 0;
 static int opt_reflink = FCP_REFLINK_AUTO;
@@ -67,27 +70,26 @@ static uint64_t g_bytes_total = 0;
 static fcp_config_t g_config;
 
 static const struct option long_options[] = {
-    {"recursive",      'r', NULL, 'r'},
-    {"remove-destination", 'R', NULL, 'R'},
-    {"interactive",    'i', NULL, 'i'},
-    {"no-clobber",     'n', NULL, 'n'},
-    {"force",          'f', NULL, 'f'},
-    {"verbose",        'v', NULL, 'v'},
-    {"dereference",    'd', NULL, 'd'},
-    {"symbolic",       's', NULL, 's'},
-    {"update",         'u', NULL, 'u'},
-    {"target-directory", 't', NULL, 't'},
-    {"progress",       'P', NULL, 1003},
-    {"no-progress",    0, NULL, 1004},
+    {"recursive",      no_argument,       NULL, 'r'},
+    {"interactive",    no_argument,       NULL, 'i'},
+    {"no-clobber",     no_argument,       NULL, 'n'},
+    {"force",          no_argument,       NULL, 'f'},
+    {"verbose",        no_argument,       NULL, 'v'},
+    {"dereference",    no_argument,       NULL, 'd'},
+    {"symbolic",       no_argument,       NULL, 's'},
+    {"update",         no_argument,       NULL, 'u'},
+    {"target-directory", required_argument, NULL, 't'},
+    {"progress",       no_argument,       NULL, 'P'},
+    {"no-progress",    no_argument,       NULL, 1004},
     {"parallel",       required_argument, NULL, 1005},
-    {"verify-hash",    0, NULL, 1006},
+    {"verify-hash",    no_argument,       NULL, 1006},
     {"reflink",        required_argument, NULL, 1007},
-    {"dry-run",        'n', NULL, 1008},
+    {"dry-run",        no_argument,       NULL, 1008},
     {"speed-limit",    required_argument, NULL, 1009},
-    {"no-color",       0, NULL, 1010},
+    {"no-color",       no_argument,       NULL, 1010},
     {"config",         required_argument, NULL, 1011},
-    {"help",           0, NULL, 1012},
-    {"version",        'V', NULL, 1013},
+    {"help",           no_argument,       NULL, 'h'},
+    {"version",        no_argument,       NULL, 'V'},
     {"exclude",        required_argument, NULL, 1014},
     {NULL, 0, NULL, 0}
 };
@@ -104,7 +106,7 @@ static void print_help(FILE *fp) {
         "fcp %s - Faster CP with progress, identical file detection, and parallelism\n"
         "\n"
         "Basic options:\n"
-        "  -r, --recursive          Copy directories recursively\n"
+        "  -r, -R, --recursive      Copy directories recursively\n"
         "  -i, --interactive        Prompt before overwrite\n"
         "  -n, --no-clobber         Do not overwrite an existing file\n"
         "  -f, --force              Remove existing destination first\n"
@@ -118,7 +120,7 @@ static void print_help(FILE *fp) {
         "  -P, --progress           Show progress bar (default: auto)\n"
         "      --no-progress        Disable progress display\n"
         "      --parallel=[N|auto]  Number of parallel copy workers (default: auto)\n"
-        "      --exclude=PATTERN  Exclude files matching PATTERN (glob)\n"
+        "      --exclude=PATTERN    Exclude files matching PATTERN (glob)\n"
         "      --verify-hash        Use SHA256 for identical file detection\n"
         "      --reflink=MODE       Use reflink when supported (auto|always|never)\n"
         "      --dry-run            Preview without copying\n"
@@ -138,11 +140,30 @@ static void print_help(FILE *fp) {
         FCP_VERSION);
 }
 
+static bool prompt_interactive(const char *dst) {
+    fprintf(stderr, "fcp: overwrite '%s'? ", dst);
+    fflush(stderr);
+    int c = getchar();
+    bool overwrite = (c == 'y' || c == 'Y');
+    while (c != '\n' && c != EOF) {
+        c = getchar();
+    }
+    return overwrite;
+}
+
 /* Handle overwrite policy and identical file detection for a single file */
 static int handle_overwrite(const char *src, const char *dst) {
     struct stat dst_stat;
 
-    if (stat(dst, &dst_stat) == 0) {
+    if (lstat(dst, &dst_stat) == 0) {
+        /* If symbolic link creation mode (-s) */
+        if (opt_symbolic) {
+            if (opt_no_clobber) return 0;
+            if (opt_interactive && !prompt_interactive(dst)) return 0;
+            unlink(dst);
+            return 1;
+        }
+
         /* Destination exists - check if files are identical */
         int identical = fcp_check_identical(src, dst, opt_verify_hash);
 
@@ -153,22 +174,40 @@ static int handle_overwrite(const char *src, const char *dst) {
             return 0; /* Skip - files are identical */
         }
 
-        if (identical == FCP_IDENTICAL_UNKNOWN) {
-            /* Need hash comparison - we'll let fcp_copy_file handle it */
+        /* --update: skip if destination is newer or same age as source */
+        if (opt_update) {
+            struct stat src_stat;
+            if (stat(src, &src_stat) == 0) {
+                if (dst_stat.st_mtime >= src_stat.st_mtime) {
+                    if (opt_verbose) {
+                        fprintf(stderr, "fcp: skipped '%s' (destination is not older than source)\n", dst);
+                    }
+                    return 0;
+                }
+            }
         }
 
         /* --no-clobber: skip if dest exists (even if different) */
-        if (!opt_force) {
+        if (opt_no_clobber) {
             if (opt_verbose) {
                 fprintf(stderr, "fcp: skipped '%s' (file exists)\n", dst);
             }
             return 0;
         }
 
+        /* --interactive: prompt user */
+        if (opt_interactive) {
+            if (!prompt_interactive(dst)) {
+                return 0;
+            }
+        }
+
         /* --force: remove destination */
-        if (unlink(dst) != 0) {
-            fprintf(stderr, "fcp: cannot remove '%s': %s\n", dst, strerror(errno));
-            return -1;
+        if (opt_force) {
+            if (unlink(dst) != 0 && errno != ENOENT) {
+                fprintf(stderr, "fcp: cannot remove '%s': %s\n", dst, strerror(errno));
+                return -1;
+            }
         }
     }
 
@@ -180,6 +219,18 @@ static int copy_single_file(const char *src, const char *dst) {
     int allow = handle_overwrite(src, dst);
     if (allow < 0) return -1;
     if (allow == 0) return 0;
+
+    if (opt_symbolic) {
+        unlink(dst);
+        if (symlink(src, dst) != 0) {
+            fprintf(stderr, "fcp: cannot create symlink '%s' -> '%s': %s\n", dst, src, strerror(errno));
+            return -1;
+        }
+        if (opt_verbose) {
+            fprintf(stderr, "fcp: '%s' -> '%s'\n", dst, src);
+        }
+        return 0;
+    }
 
     /* Get file size for progress */
     struct stat st;
@@ -213,15 +264,26 @@ static void *worker_thread(void *arg) {
     fcp_queue_item_t item;
 
     while (fcp_queue_pop(&g_queue, &item) == 0) {
-        /* Check identical before copying */
-        int identical = fcp_check_identical(item.src, item.dst, opt_verify_hash);
-        if (identical == FCP_IDENTICAL_YES) {
-            g_files_skipped++;
-            g_bytes_skipped += item.size;
-            /* Update scanning progress to show skipped files (sets total_done/total_all) */
-            fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped, g_files_skipped, g_bytes_total);
-            if (opt_verbose) {
-                fprintf(stderr, "fcp: skipped identical '%s'\n", item.src);
+        int allow = handle_overwrite(item.src, item.dst);
+        if (allow <= 0) {
+            if (allow == 0) {
+                g_files_skipped++;
+                g_bytes_skipped += item.size;
+                if (g_progress.enabled) {
+                    g_progress.total_done += item.size;
+                }
+            }
+            free(item.src);
+            free(item.dst);
+            continue;
+        }
+
+        if (opt_symbolic) {
+            unlink(item.dst);
+            if (symlink(item.src, item.dst) != 0) {
+                fprintf(stderr, "fcp: cannot create symlink '%s' -> '%s': %s\n", item.dst, item.src, strerror(errno));
+            } else if (opt_verbose) {
+                fprintf(stderr, "fcp: '%s' -> '%s'\n", item.dst, item.src);
             }
             free(item.src);
             free(item.dst);
@@ -415,19 +477,17 @@ int main(int argc, char *argv[]) {
         fcp_config_load(&g_config, config_path);
     }
 
-    while ((opt = getopt_long(argc, argv, "riIffvdst:PRhV", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "rRiInfvdsut:PhV", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'r':
-                opt_recursive = 1;
-                break;
             case 'R':
-                opt_force = 1;
+                opt_recursive = 1;
                 break;
             case 'i':
                 opt_interactive = 1;
                 break;
             case 'n':
-                /* No-clobber or dry-run (we'll handle this later) */
+                opt_no_clobber = 1;
                 break;
             case 'f':
                 opt_force = 1;
@@ -439,17 +499,15 @@ int main(int argc, char *argv[]) {
                 opt_dereference = 1;
                 break;
             case 's':
-                opt_dereference = 1;
+                opt_symbolic = 1;
                 break;
             case 'u':
-                /* Update mode (not implemented in v1) */
+                opt_update = 1;
                 break;
             case 't':
                 opt_target_dir = optarg;
                 break;
             case 'P':
-                opt_no_progress = 0;
-                break;
             case 1003: /* --progress */
                 opt_no_progress = 0;
                 break;
@@ -457,7 +515,11 @@ int main(int argc, char *argv[]) {
                 opt_no_progress = 1;
                 break;
             case 1005: /* --parallel */
-                opt_parallel = atoi(optarg);
+                if (strcmp(optarg, "auto") == 0) {
+                    opt_parallel = 0;
+                } else {
+                    opt_parallel = atoi(optarg);
+                }
                 break;
             case 1006: /* --verify-hash */
                 opt_verify_hash = 1;
@@ -467,7 +529,7 @@ int main(int argc, char *argv[]) {
                     opt_reflink = FCP_REFLINK_AUTO;
                 } else if (strcmp(optarg, "always") == 0) {
                     opt_reflink = FCP_REFLINK_ALWAYS;
-                } else if (strcmp(optarg, "never") == 0) {
+                } else if (strcmp(optarg, "never") == 0 || strcmp(optarg, "off") == 0) {
                     opt_reflink = FCP_REFLINK_OFF;
                 } else {
                     fprintf(stderr, "fcp: invalid reflink mode '%s'\n", optarg);

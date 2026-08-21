@@ -33,6 +33,7 @@ jobs:
         if: matrix.arch != 'amd64'
         run: |
           sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+          sudo apt-get install -y libssl-dev:arm64 libssl-dev:armhf
 
       - name: Build binary
         env:

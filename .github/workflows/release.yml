@@ -17,7 +17,7 @@ jobs:
             ubuntu: '24.04'
           - arch: arm64
             deb-arch: arm64
-            ubuntu: '22.04'
+            ubuntu: '24.04'
     runs-on: ubuntu-${{ matrix.ubuntu }}
 
     steps:
@@ -37,9 +37,14 @@ jobs:
       - name: Install cross-compilation tools
         if: matrix.arch == 'arm64'
         run: |
+          set -e
+          echo "Adding arm64 architecture..."
           sudo dpkg --add-architecture arm64
-          sudo apt-get update || true
+          echo "Updating package lists..."
+          sudo apt-get update
+          echo "Installing cross-compilation tools..."
           sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
+          echo "Cross-compilation tools installed successfully"
 
       - name: Build binary
         env:

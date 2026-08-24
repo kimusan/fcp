@@ -758,9 +758,20 @@ case 'h':
         } else if (argc - optind > 2) {
             /* Multiple sources - last arg is destination */
             banner_dst = argv[argc - 1];
+            /* For multiple sources, show just the parent directory of first source */
+            char *src_copy = strdup(first_arg);
+            char *slash = strrchr(src_copy, '/');
+            if (slash) {
+                *(slash + 1) = '\0';
+            }
+            banner_src = src_copy;
+            /* banner_src points to src_copy, which we'll free after banner */
         }
         
         fcp_progress_banner(&g_progress, banner_src, banner_dst);
+        if (argc - optind > 2) {
+            free((char *)banner_src);
+        }
     }
 
     /* Determine number of workers */

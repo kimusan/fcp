@@ -902,10 +902,22 @@ case 'h':
                 fprintf(stderr, "fcp: cannot stat '%s': %s\n", src, strerror(errno));
                 g_errors++;
             } else {
+                /* Set up progress for single file - skip scanning phase */
+                if (g_progress.enabled) {
+                    g_bytes_total = st.st_size;
+                    g_progress.total_all = st.st_size;
+                    g_progress.phase = FCP_PHASE_COPYING;
+                    g_progress.last_update_time = 0; /* Force first render */
+                }
+
                 if (g_num_workers > 1) {
                     fcp_queue_push(&g_queue, src, final_dst, st.st_size);
                 } else {
                     copy_single_file(src, final_dst);
+                }
+
+                if (g_progress.enabled) {
+                    fcp_progress_render(&g_progress);
                 }
             }
             free(final_dst);

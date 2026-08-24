@@ -67,9 +67,9 @@ static pthread_t *g_workers = NULL;
 static int g_num_workers = 0;
 
 /* Scanning counter and error tracking (atomic for thread safety) */
-static atomic_int g_files_scanned = 0;
+atomic_int g_files_scanned = 0;
 static atomic_int g_files_to_copy = 0;
-static atomic_int g_files_skipped = 0;
+atomic_int g_files_skipped = 0;
 static atomic_uint_least64_t g_bytes_skipped = 0;
 static atomic_uint_least64_t g_bytes_total = 0;
 static atomic_int g_errors = 0;
@@ -273,6 +273,9 @@ static int copy_single_file(const char *src, const char *dst) {
     }
     if (allow == 0) return 0;
 
+    /* Track file in progress */
+    atomic_fetch_add(&g_files_scanned, 1);
+
     if (opt_symbolic) {
         unlink(dst);
         if (symlink(src, dst) != 0) {
@@ -283,6 +286,7 @@ static int copy_single_file(const char *src, const char *dst) {
         if (opt_verbose) {
             fprintf(stderr, "fcp: '%s' -> '%s'\n", dst, src);
         }
+        fcp_progress_update_copy(&g_progress);
         return 0;
     }
 
@@ -305,12 +309,16 @@ static int copy_single_file(const char *src, const char *dst) {
         }
     } else if (ret == FCP_COPY_SKIP) {
         fcp_progress_complete_file(&g_progress);
+        atomic_fetch_add(&g_files_skipped, 1);
         if (opt_verbose) {
             fprintf(stderr, "fcp: skipped identical '%s'\n", src);
         }
     } else {
         g_errors++;
     }
+
+    /* Update copy phase counters */
+    fcp_progress_update_copy(&g_progress);
 
     return (ret == FCP_COPY_OK) ? 0 : (ret == FCP_COPY_SKIP) ? 0 : -1;
 }

@@ -10,6 +10,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <stdatomic.h>
+
+/* External atomic counters (defined in fcp.c) */
+extern atomic_int g_files_scanned;
+extern atomic_int g_files_skipped;
 
 /* Scanning/copy phase */
 typedef enum {
@@ -61,6 +66,9 @@ void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uin
 
 /* Mark scanning complete with summary */
 void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int files_to_copy);
+
+/* Update progress counters during copy phase (called from copy functions) */
+void fcp_progress_update_copy(fcp_progress_t *progress);
 
 /* Update current file being copied */
 void fcp_progress_update_file(fcp_progress_t *progress, const char *file, uint64_t total);

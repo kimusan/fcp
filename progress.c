@@ -106,6 +106,15 @@ void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int
     pthread_mutex_unlock(&progress->mutex);
 }
 
+/* Update progress counters during copy phase (called from copy functions) */
+void fcp_progress_update_copy(fcp_progress_t *progress) {
+    pthread_mutex_lock(&progress->mutex);
+    /* Copy atomic counters to progress struct for display */
+    progress->files_scanned = atomic_load(&g_files_scanned);
+    progress->files_skipped_identical = atomic_load(&g_files_skipped);
+    pthread_mutex_unlock(&progress->mutex);
+}
+
 void fcp_progress_update_file(fcp_progress_t *progress, const char *file, uint64_t total) {
     pthread_mutex_lock(&progress->mutex);
     progress->current_file = file;
@@ -221,6 +230,10 @@ void fcp_progress_render(fcp_progress_t *progress) {
     fprintf(stderr, "\r");
 
     if (use_color()) {
+        /* Show scanned/skipped counter */
+        fprintf(stderr, COLOR_BOLD "  Scanned:" COLOR_RESET " %d" COLOR_GRAY", Skipped:" COLOR_RESET " %d" COLOR_GRAY" | " COLOR_RESET,
+                progress->files_scanned, progress->files_skipped_identical);
+        
         if (progress->current_file) {
             /* Show current file being copied */
             fprintf(stderr, COLOR_BOLD "%s" COLOR_RESET, progress->current_file);
@@ -243,6 +256,8 @@ void fcp_progress_render(fcp_progress_t *progress) {
                     COLOR_CYAN, eta_str, COLOR_RESET);
         }
     } else {
+        fprintf(stderr, "Scanned: %d, Skipped: %d | ",
+                progress->files_scanned, progress->files_skipped_identical);
         fprintf(stderr, "[%s] %5.1f%%", bar, pct);
         fprintf(stderr, " %s/%s", format_size(progress->total_done),
                 format_size(progress->total_all > 0 ? progress->total_all : progress->current_total));

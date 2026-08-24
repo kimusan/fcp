@@ -169,6 +169,7 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
             /* Instant reflink success */
             if (progress && progress->enabled) {
                 fcp_progress_update_done(progress, file_size);
+                fcp_progress_render(progress);
             }
             apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src);
             if (atomic_mode) {
@@ -307,6 +308,7 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                     sparse_copied += w_total;
                     if (progress && progress->enabled) {
                         fcp_progress_update_done(progress, w_total);
+                        fcp_progress_render(progress);
                     }
                 }
 
@@ -335,6 +337,11 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
         double speed_start = clock_gettime_sec();
         double speed_last_update = speed_start;
         bool try_cfr = true;
+
+        /* Update copy phase counters before rendering */
+        if (progress && progress->enabled) {
+            fcp_progress_update_copy(progress);
+        }
 
         while (total_copied < file_size) {
             ssize_t chunk_size = 0;
@@ -393,6 +400,7 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
 
             if (progress && progress->enabled) {
                 fcp_progress_update_done(progress, chunk_size);
+                fcp_progress_render(progress);
             }
 
             /* Speed limiting */

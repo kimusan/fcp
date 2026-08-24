@@ -96,7 +96,8 @@ void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int
     progress->last_update_time = 0; /* Force first render in copy phase */
 
     if (progress->enabled) {
-        /* Move to new line after scanning info */
+        /* Clear scanning progress line and move to new line */
+        fprintf(stderr, "\r\033[K");
         fprintf(stderr, "\n");
         fprintf(stderr, "  %d files to copy" COLOR_GRAY", %d identical skipped" COLOR_RESET "\n",
                 files_to_copy, files_skipped);

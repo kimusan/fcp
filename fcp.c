@@ -30,7 +30,7 @@
 #include <signal.h>
 #include <sys/xattr.h>
 
-#define FCP_VERSION "2.0.0"
+#define FCP_VERSION "2.0.1"
 
 /* Global options */
 static int opt_recursive = 0;

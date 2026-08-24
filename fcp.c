@@ -750,9 +750,16 @@ case 'h':
         const char *first_arg = argv[optind];
         const char *banner_src = first_arg;
         const char *banner_dst = "";
-        if (optind + 1 < argc) {
+        
+        /* Determine the actual destination for the banner */
+        if (argc - optind == 2) {
+            /* Single source + destination */
             banner_dst = argv[optind + 1];
+        } else if (argc - optind > 2) {
+            /* Multiple sources - last arg is destination */
+            banner_dst = argv[argc - 1];
         }
+        
         fcp_progress_banner(&g_progress, banner_src, banner_dst);
     }
 

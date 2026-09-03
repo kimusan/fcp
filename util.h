@@ -20,6 +20,9 @@ const char *format_speed(double bytes_per_sec);
 /* Parse size string like "10M", "1G", "500K" into bytes. Returns 0 on success. */
 int parse_size(const char *str, uint64_t *result);
 
+/* Parse a parallel-worker count or "auto" into a non-negative integer. */
+int parse_parallel_count(const char *str, int *result);
+
 /* Check if file descriptor is a terminal */
 int isatty_fd(int fd);
 

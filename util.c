@@ -94,6 +94,24 @@ int parse_size(const char *str, uint64_t *result) {
     return 0;
 }
 
+int parse_parallel_count(const char *str, int *result) {
+    if (strcmp(str, "auto") == 0) {
+        *result = 0;
+        return 0;
+    }
+
+    char *endptr;
+    errno = 0;
+    long value = strtol(str, &endptr, 10);
+    if (endptr == str || *endptr != '\0' || errno == ERANGE ||
+        value < 0 || value > INT_MAX) {
+        return -1;
+    }
+
+    *result = (int)value;
+    return 0;
+}
+
 int isatty_fd(int fd) {
     return isatty(fd);
 }

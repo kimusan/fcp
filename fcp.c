@@ -678,10 +678,9 @@ int main(int argc, char *argv[]) {
                 opt_no_progress = 1;
                 break;
             case 1005: /* --parallel */
-                if (strcmp(optarg, "auto") == 0) {
-                    opt_parallel = 0;
-                } else {
-                    opt_parallel = atoi(optarg);
+                if (parse_parallel_count(optarg, &opt_parallel) != 0) {
+                    fprintf(stderr, "fcp: invalid parallel worker count '%s'\n", optarg);
+                    return 1;
                 }
                 break;
             case 1006: /* --verify-hash */

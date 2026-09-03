@@ -5,12 +5,14 @@
  */
 
 #include "config.h"
+#include "util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <errno.h>
 #include <sys/stat.h>
 
 #define CONFIG_MAX_LINE 1024
@@ -78,10 +80,10 @@ int fcp_config_load(fcp_config_t *config, const char *path) {
         value = skip_whitespace(value);
 
         if (strcmp(key, "parallel") == 0) {
-            if (strcmp(value, "auto") == 0) {
-                config->parallel = 0;
-            } else {
-                config->parallel = atoi(value);
+            if (parse_parallel_count(value, &config->parallel) != 0) {
+                fclose(fp);
+                errno = EINVAL;
+                return -1;
             }
         } else if (strcmp(key, "progress") == 0) {
             if (strcmp(value, "off") == 0 || strcmp(value, "false") == 0) {

@@ -601,13 +601,21 @@ int main(int argc, char *argv[]) {
     }
 
     if (explicit_config_path) {
-        fcp_config_load(&g_config, explicit_config_path);
+        if (fcp_config_load(&g_config, explicit_config_path) != 0) {
+            fprintf(stderr, "fcp: cannot load config '%s': %s\n",
+                    explicit_config_path, strerror(errno));
+            return 1;
+        }
     } else {
         const char *home = getenv("HOME");
         if (home) {
-        char config_path[2048];
-        snprintf(config_path, sizeof(config_path), "%s/.config/fcp/config", home);
-        fcp_config_load(&g_config, config_path);
+            char config_path[2048];
+            snprintf(config_path, sizeof(config_path), "%s/.config/fcp/config", home);
+            if (fcp_config_load(&g_config, config_path) != 0 && errno != ENOENT) {
+                fprintf(stderr, "fcp: cannot load config '%s': %s\n",
+                        config_path, strerror(errno));
+                return 1;
+            }
         }
     }
 

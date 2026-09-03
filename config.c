@@ -46,8 +46,7 @@ static char *trim_newline(char *str) {
 int fcp_config_load(fcp_config_t *config, const char *path) {
     FILE *fp = fopen(path, "r");
     if (!fp) {
-        /* Config file doesn't exist - that's OK, use defaults */
-        return 0;
+        return -1;
     }
 
     char line[CONFIG_MAX_LINE];

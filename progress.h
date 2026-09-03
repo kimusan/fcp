@@ -51,6 +51,8 @@ typedef struct fcp_progress_s {
     uint64_t total_bytes;  /* Total bytes found during scanning (all files, including identical) */
     double start_time;
     double last_update_time;
+    double last_speed_time;
+    uint64_t last_speed_bytes;
 
     /* Performance stats */
     double speed; /* bytes per second */

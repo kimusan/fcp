@@ -82,6 +82,8 @@ void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan) {
     progress->total_bytes = 0;
     progress->total_done = 0;
     progress->total_all = 0;
+    progress->last_speed_time = 0;
+    progress->last_speed_bytes = 0;
     progress->last_update_time = 0; /* Force first render */
     pthread_mutex_unlock(&progress->mutex);
 }
@@ -104,6 +106,8 @@ void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int
     progress->files_to_copy = files_to_copy;
     progress->phase = FCP_PHASE_COPYING;
     progress->last_update_time = 0; /* Force first render in copy phase */
+    progress->last_speed_time = 0;
+    progress->last_speed_bytes = progress->total_done;
 
     if (progress->enabled) {
         /* Clear scanning progress line and move to new line */
@@ -192,8 +196,6 @@ void fcp_progress_render(fcp_progress_t *progress) {
     }
     progress->last_update_time = now;
 
-    double elapsed = now - progress->start_time;
-
     /* The final total is not known while scanning, so show activity instead of a percentage. */
     if (progress->phase == FCP_PHASE_SCANNING) {
         char bar[PROGRESS_BAR_WIDTH + 1];
@@ -241,9 +243,18 @@ void fcp_progress_render(fcp_progress_t *progress) {
         return;
     }
 
-    /* Calculate speed and ETA */
-    if (elapsed > 0) {
-        progress->speed = (double)progress->total_done / elapsed;
+    /* Smooth recent transfer samples instead of averaging in scan time. */
+    if (progress->last_speed_time == 0) {
+        progress->last_speed_time = now;
+        progress->last_speed_bytes = progress->total_done;
+        progress->speed = 0;
+    } else if (now - progress->last_speed_time >= 0.25) {
+        uint64_t bytes = progress->total_done - progress->last_speed_bytes;
+        double instantaneous = (double)bytes / (now - progress->last_speed_time);
+        progress->speed = progress->speed > 0 ?
+                          0.65 * progress->speed + 0.35 * instantaneous : instantaneous;
+        progress->last_speed_time = now;
+        progress->last_speed_bytes = progress->total_done;
     }
 
     if (progress->total_all > 0 && progress->speed > 0) {

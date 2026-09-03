@@ -761,6 +761,11 @@ case 'h':
         }
     }
 
+    /* Interactive prompts must be answered in destination order. */
+    if (opt_interactive) {
+        opt_parallel = 1;
+    }
+
     /* Initialize progress */
     bool progress_enabled = !opt_no_progress && (!opt_dry_run || opt_verbose);
     fcp_set_colors_enabled(!opt_no_color);

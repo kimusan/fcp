@@ -85,7 +85,7 @@ fcp -f important.txt ~/backup/important.txt
 | `-a, --archive` | Archive mode: same as `-d -r --preserve=all` |
 | `-p, --preserve[=ATTRS]` | Preserve specified attributes (`mode,ownership,timestamps,xattr,all`) |
 | `-r, -R, --recursive` | Copy directories recursively |
-| `-i, --interactive` | Prompt before overwrite |
+| `-i, --interactive` | Prompt before overwrite; uses one worker to keep prompts ordered |
 | `-n, --no-clobber` | Do not overwrite existing files |
 | `-f, --force` | Remove existing destination first |
 | `-v, --verbose` | Display copied file names |

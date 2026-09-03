@@ -657,7 +657,7 @@ static int copy_directory(const char *src, const char *dst) {
                 }
             } else {
                 g_files_to_copy++;
-                if (opt_parallel > 1) {
+                if (g_num_workers > 1) {
                     if (fcp_queue_push(&g_queue, src_path, dst_path, st.st_size) != 0) {
                         g_errors++;
                     }
@@ -693,7 +693,7 @@ static int copy_directory(const char *src, const char *dst) {
                     if (S_ISDIR(res_stat.st_mode)) {
                         copy_directory(src_path, dst_path);
                     } else if (S_ISREG(res_stat.st_mode)) {
-                        if (opt_parallel > 1) {
+                        if (g_num_workers > 1) {
                             if (fcp_queue_push(&g_queue, src_path, dst_path, res_stat.st_size) != 0) {
                                 g_errors++;
                             }
@@ -1020,7 +1020,7 @@ case 'h':
         g_num_workers = opt_parallel;
     }
 
-    fcp_progress_set_parallel(&g_progress, opt_parallel > 1);
+    fcp_progress_set_parallel(&g_progress, g_num_workers > 1);
 
     /* Initialize queue and worker threads */
     fcp_queue_init(&g_queue, g_num_workers * 4);

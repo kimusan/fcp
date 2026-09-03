@@ -28,6 +28,7 @@ typedef enum {
 typedef struct fcp_progress_s {
     bool enabled;
     bool active;
+    bool parallel_copy;
     pthread_mutex_t mutex;
 
     /* Current phase */
@@ -42,6 +43,7 @@ typedef struct fcp_progress_s {
     const char *current_file;
     uint64_t current_done;
     uint64_t current_total;
+    unsigned int active_files;
 
     /* Overall stats */
     uint64_t total_done;
@@ -57,6 +59,9 @@ typedef struct fcp_progress_s {
 
 /* Initialize progress system */
 void fcp_progress_init(fcp_progress_t *progress, bool enabled);
+
+/* Select single-file or aggregate parallel-copy status. */
+void fcp_progress_set_parallel(fcp_progress_t *progress, bool parallel);
 
 /* Set scanning phase with file count info */
 void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan);

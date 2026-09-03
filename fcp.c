@@ -313,6 +313,7 @@ static int copy_single_file(const char *src, const char *dst) {
             fprintf(stderr, "fcp: skipped identical '%s'\n", src);
         }
     } else {
+        fcp_progress_complete_file(&g_progress);
         g_errors++;
     }
 
@@ -378,6 +379,7 @@ static void *worker_thread(void *arg) {
                 fprintf(stderr, "fcp: skipped identical '%s'\n", item.src);
             }
         } else {
+            fcp_progress_complete_file(&g_progress);
             g_errors++;
         }
 
@@ -505,6 +507,7 @@ static int copy_directory(const char *src, const char *dst) {
                             fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
                         }
                     } else {
+                        fcp_progress_complete_file(&g_progress);
                         g_errors++;
                     }
                 }
@@ -816,6 +819,8 @@ case 'h':
     } else {
         g_num_workers = opt_parallel;
     }
+
+    fcp_progress_set_parallel(&g_progress, opt_parallel > 1);
 
     /* Initialize queue and worker threads */
     fcp_queue_init(&g_queue, g_num_workers * 4);

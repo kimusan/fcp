@@ -48,6 +48,16 @@ void fcp_progress_init(fcp_progress_t *progress, bool enabled) {
     pthread_mutex_init(&progress->mutex, NULL);
 }
 
+void fcp_progress_set_parallel(fcp_progress_t *progress, bool parallel) {
+    pthread_mutex_lock(&progress->mutex);
+    progress->parallel_copy = parallel;
+    progress->active_files = 0;
+    progress->current_file = NULL;
+    progress->current_done = 0;
+    progress->current_total = 0;
+    pthread_mutex_unlock(&progress->mutex);
+}
+
 void fcp_progress_banner(fcp_progress_t *progress, const char *src, const char *dst) {
     if (!progress->enabled) return;
 
@@ -134,9 +144,13 @@ void fcp_progress_update_copy(fcp_progress_t *progress) {
 
 void fcp_progress_update_file(fcp_progress_t *progress, const char *file, uint64_t total) {
     pthread_mutex_lock(&progress->mutex);
-    progress->current_file = file;
-    progress->current_done = 0;
-    progress->current_total = total;
+    if (progress->parallel_copy) {
+        progress->active_files++;
+    } else {
+        progress->current_file = file;
+        progress->current_done = 0;
+        progress->current_total = total;
+    }
     progress->active = true;
     pthread_mutex_unlock(&progress->mutex);
 }
@@ -150,7 +164,11 @@ void fcp_progress_update_done(fcp_progress_t *progress, uint64_t bytes) {
 
 void fcp_progress_complete_file(fcp_progress_t *progress) {
     pthread_mutex_lock(&progress->mutex);
-    if (progress->current_file) {
+    if (progress->parallel_copy) {
+        if (progress->active_files > 0) {
+            progress->active_files--;
+        }
+    } else if (progress->current_file) {
         progress->current_done = 0;
         progress->current_total = 0;
         progress->current_file = NULL;
@@ -286,6 +304,10 @@ void fcp_progress_render(fcp_progress_t *progress) {
                     COLOR_YELLOW, format_speed(progress->speed), COLOR_RESET,
                     COLOR_CYAN, eta_str, COLOR_RESET);
         } else {
+            if (progress->parallel_copy && progress->active_files > 0) {
+                fprintf(stderr, "%u active file%s | ", progress->active_files,
+                        progress->active_files == 1 ? "" : "s");
+            }
             fprintf(stderr, COLOR_GREEN "[%s]" COLOR_RESET " %5.1f%%",
                     bar, pct);
             fprintf(stderr, " %s%s%s/%s%s%s",

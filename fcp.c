@@ -588,11 +588,27 @@ int main(int argc, char *argv[]) {
 
     /* Load config file */
     fcp_config_defaults(&g_config);
-    const char *home = getenv("HOME");
-    if (home) {
+    const char *explicit_config_path = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--") == 0) {
+            break;
+        }
+        if (strncmp(argv[i], "--config=", 9) == 0) {
+            explicit_config_path = argv[i] + 9;
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            explicit_config_path = argv[++i];
+        }
+    }
+
+    if (explicit_config_path) {
+        fcp_config_load(&g_config, explicit_config_path);
+    } else {
+        const char *home = getenv("HOME");
+        if (home) {
         char config_path[2048];
         snprintf(config_path, sizeof(config_path), "%s/.config/fcp/config", home);
         fcp_config_load(&g_config, config_path);
+        }
     }
 
     opt_parallel = g_config.parallel;
@@ -687,17 +703,7 @@ int main(int argc, char *argv[]) {
             case 1010: /* --no-color */
                 opt_no_color = 1;
                 break;
-            case 1011: /* --config */
-                if (fcp_config_load(&g_config, optarg) == 0) {
-                    opt_parallel = g_config.parallel;
-                    opt_reflink = g_config.reflink;
-                    opt_sparse = g_config.sparse;
-                    opt_atomic = g_config.atomic ? 1 : 0;
-                    opt_speed_limit = g_config.speed_limit;
-                    opt_verify_hash = g_config.verify_hash ? 1 : 0;
-                    opt_no_progress = g_config.progress_auto ? 0 : 1;
-                    opt_no_color = g_config.color_auto ? 0 : 1;
-                }
+            case 1011: /* --config, already loaded before CLI parsing */
                 break;
             case 1015: /* --sparse */
                 if (strcmp(optarg, "auto") == 0) {

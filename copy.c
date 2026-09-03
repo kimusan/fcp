@@ -35,6 +35,28 @@ static double clock_gettime_sec(void) {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
+/* Create an exclusive staging file alongside dst for an atomic replacement. */
+static int create_atomic_temp(const char *dst, char *tmp_dst, size_t tmp_dst_size) {
+    const char *slash = strrchr(dst, '/');
+    int length;
+
+    if (!slash) {
+        length = snprintf(tmp_dst, tmp_dst_size, ".fcp_tmp.XXXXXX");
+    } else if (slash == dst) {
+        length = snprintf(tmp_dst, tmp_dst_size, "/.fcp_tmp.XXXXXX");
+    } else {
+        length = snprintf(tmp_dst, tmp_dst_size, "%.*s/.fcp_tmp.XXXXXX",
+                          (int)(slash - dst), dst);
+    }
+
+    if (length < 0 || (size_t)length >= tmp_dst_size) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return mkostemp(tmp_dst, O_CLOEXEC);
+}
+
 /* Copy extended attributes between file descriptors or paths */
 int fcp_copy_xattrs(int fd_src, int fd_dst, const char *src_path, const char *dst_path) {
     ssize_t list_len;
@@ -139,22 +161,13 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
     char tmp_dst[PATH_MAX + 128];
     const char *target_dst = dst;
 
+    int fd_dst;
     if (atomic_mode) {
-        /* Construct a hidden temporary file path in the destination directory */
-        char dst_dir[PATH_MAX];
-        strncpy(dst_dir, dst, sizeof(dst_dir) - 1);
-        dst_dir[sizeof(dst_dir) - 1] = '\0';
-        char *slash = strrchr(dst_dir, '/');
-        if (slash) {
-            *slash = '\0';
-            snprintf(tmp_dst, sizeof(tmp_dst), "%s/.fcp_tmp.%d.%lx", dst_dir, (int)getpid(), (unsigned long)random());
-        } else {
-            snprintf(tmp_dst, sizeof(tmp_dst), ".fcp_tmp.%d.%lx", (int)getpid(), (unsigned long)random());
-        }
+        fd_dst = create_atomic_temp(dst, tmp_dst, sizeof(tmp_dst));
         target_dst = tmp_dst;
+    } else {
+        fd_dst = open(target_dst, O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode);
     }
-
-    int fd_dst = open(target_dst, O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode);
     if (fd_dst < 0) {
         close(fd_src);
         fprintf(stderr, "fcp: cannot create '%s': %s\n", target_dst, strerror(errno));

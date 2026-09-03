@@ -28,11 +28,42 @@
 
 #define FCP_BUFFER_SIZE (1024 * 1024) /* 1MB copy buffer */
 
+static pthread_mutex_t speed_limit_mutex = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t speed_limit_rate = 0;
+static uint64_t speed_limit_bytes = 0;
+static double speed_limit_start = 0;
+
 /* Clock helper for speed limiting */
 static double clock_gettime_sec(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+/* Reserve transfer time against a process-wide bandwidth limit. */
+static void limit_copy_speed(uint64_t bytes, uint64_t rate) {
+    if (rate == 0 || bytes == 0) {
+        return;
+    }
+
+    pthread_mutex_lock(&speed_limit_mutex);
+    if (speed_limit_rate != rate) {
+        speed_limit_rate = rate;
+        speed_limit_bytes = 0;
+        speed_limit_start = clock_gettime_sec();
+    }
+
+    speed_limit_bytes += bytes;
+    double deadline = speed_limit_start + (double)speed_limit_bytes / rate;
+    double remaining = deadline - clock_gettime_sec();
+    if (remaining > 0) {
+        struct timespec sleep_time;
+        sleep_time.tv_sec = (time_t)remaining;
+        sleep_time.tv_nsec = (long)((remaining - sleep_time.tv_sec) * 1e9);
+        while (nanosleep(&sleep_time, &sleep_time) != 0 && errno == EINTR) {
+        }
+    }
+    pthread_mutex_unlock(&speed_limit_mutex);
 }
 
 /* Create an exclusive staging file alongside dst for an atomic replacement. */
@@ -394,6 +425,7 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
 
                     extent_bytes -= w_total;
                     sparse_copied += w_total;
+                    limit_copy_speed(w_total, speed_limit);
                     if (progress && progress->enabled) {
                         fcp_progress_update_done(progress, w_total);
                         fcp_progress_render(progress);
@@ -422,8 +454,6 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
         posix_fadvise(fd_src, 0, 0, POSIX_FADV_SEQUENTIAL);
 
         uint64_t total_copied = 0;
-        double speed_start = clock_gettime_sec();
-        double speed_last_update = speed_start;
         bool try_cfr = true;
 
         /* Update copy phase counters before rendering */
@@ -435,7 +465,11 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
             ssize_t chunk_size = 0;
 
             if (try_cfr) {
-                ssize_t copied = copy_file_range(fd_src, NULL, fd_dst, NULL, file_size - total_copied, 0);
+                size_t copy_length = file_size - total_copied;
+                if (speed_limit > 0 && copy_length > FCP_BUFFER_SIZE) {
+                    copy_length = FCP_BUFFER_SIZE;
+                }
+                ssize_t copied = copy_file_range(fd_src, NULL, fd_dst, NULL, copy_length, 0);
                 if (copied > 0) {
                     total_copied += copied;
                     chunk_size = copied;
@@ -502,29 +536,7 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                 fcp_progress_update_done(progress, chunk_size);
                 fcp_progress_render(progress);
             }
-
-            /* Speed limiting */
-            if (speed_limit > 0) {
-                double now = clock_gettime_sec();
-                double elapsed = now - speed_start;
-                uint64_t expected_bytes = (uint64_t)(elapsed * speed_limit);
-
-                if (total_copied > expected_bytes) {
-                    double needed_time = (double)total_copied / speed_limit;
-                    double sleep_time = needed_time - (now - speed_start);
-                    if (sleep_time > 0) {
-                        struct timespec ts;
-                        ts.tv_sec = (time_t)sleep_time;
-                        ts.tv_nsec = (long)((sleep_time - ts.tv_sec) * 1e9);
-                        nanosleep(&ts, NULL);
-                    }
-                }
-            }
-
-            double now = clock_gettime_sec();
-            if (now - speed_last_update >= 1.0) {
-                speed_last_update = now;
-            }
+            limit_copy_speed(chunk_size, speed_limit);
         }
     }
 

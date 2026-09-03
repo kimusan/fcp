@@ -15,6 +15,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <math.h>
+#include <limits.h>
+#include <sys/ioctl.h>
 
 #define PROGRESS_BAR_WIDTH 40
 #define PROGRESS_UPDATE_INTERVAL 0.1 /* 100ms */
@@ -36,6 +38,18 @@ static double clock_gettime_sec(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static int progress_bar_width(void) {
+    struct winsize size;
+    if (ioctl(STDERR_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0) {
+        return PROGRESS_BAR_WIDTH;
+    }
+
+    int width = size.ws_col - 65;
+    if (width < 10) width = 10;
+    if (width > PROGRESS_BAR_WIDTH) width = PROGRESS_BAR_WIDTH;
+    return width;
 }
 
 void fcp_progress_init(fcp_progress_t *progress, bool enabled) {
@@ -198,15 +212,16 @@ void fcp_progress_render(fcp_progress_t *progress) {
 
     /* The final total is not known while scanning, so show activity instead of a percentage. */
     if (progress->phase == FCP_PHASE_SCANNING) {
+        int bar_width = progress_bar_width();
         char bar[PROGRESS_BAR_WIDTH + 1];
-        for (int i = 0; i < PROGRESS_BAR_WIDTH; i++) {
+        for (int i = 0; i < bar_width; i++) {
             bar[i] = ' ';
         }
-        bar[PROGRESS_BAR_WIDTH] = '\0';
+        bar[bar_width] = '\0';
 
-        int sweep = 2 * (PROGRESS_BAR_WIDTH - 1);
+        int sweep = 2 * (bar_width - 1);
         int marker = (int)(now * 8.0) % sweep;
-        if (marker >= PROGRESS_BAR_WIDTH) {
+        if (marker >= bar_width) {
             marker = sweep - marker;
         }
         bar[marker] = '>';
@@ -282,18 +297,36 @@ void fcp_progress_render(fcp_progress_t *progress) {
     }
 
     /* Build progress bar string */
-    int filled = (int)(PROGRESS_BAR_WIDTH * pct / 100.0);
+    int bar_width = progress_bar_width();
+    int filled = (int)(bar_width * pct / 100.0);
     char bar[PROGRESS_BAR_WIDTH + 1];
-    for (int i = 0; i < PROGRESS_BAR_WIDTH; i++) {
+    for (int i = 0; i < bar_width; i++) {
         bar[i] = (i < filled) ? '=' : ' ';
     }
-    bar[PROGRESS_BAR_WIDTH] = '\0';
+    bar[bar_width] = '\0';
 
     char done_size[32];
     char total_size[32];
     snprintf(done_size, sizeof(done_size), "%s", format_size(progress->total_done));
     snprintf(total_size, sizeof(total_size), "%s",
              format_size(progress->total_all > 0 ? progress->total_all : progress->current_total));
+
+    const char *current_file = progress->current_file;
+    char truncated_file[PATH_MAX];
+    struct winsize terminal_size;
+    if (current_file && ioctl(STDERR_FILENO, TIOCGWINSZ, &terminal_size) == 0 &&
+        terminal_size.ws_col > 0) {
+        int file_width = terminal_size.ws_col - bar_width - 80;
+        if (file_width < 8) {
+            current_file = NULL;
+        } else {
+            if (file_width >= (int)sizeof(truncated_file)) {
+                file_width = (int)sizeof(truncated_file) - 1;
+            }
+            truncate_string(current_file, truncated_file, (size_t)file_width);
+            current_file = truncated_file;
+        }
+    }
 
     /* Clear an earlier, longer colored line before redrawing it. */
     fprintf(stderr, use_color() ? "\r\033[K" : "\r");
@@ -303,9 +336,9 @@ void fcp_progress_render(fcp_progress_t *progress) {
         fprintf(stderr, COLOR_BOLD "  Scanned:" COLOR_RESET " %d" COLOR_GRAY", Skipped:" COLOR_RESET " %d" COLOR_GRAY" | " COLOR_RESET,
                 progress->files_scanned, progress->files_skipped_identical);
         
-        if (progress->current_file) {
+        if (current_file) {
             /* Show current file being copied */
-            fprintf(stderr, COLOR_BOLD "%s" COLOR_RESET, progress->current_file);
+            fprintf(stderr, COLOR_BOLD "%s" COLOR_RESET, current_file);
             fprintf(stderr, " " COLOR_GREEN "[%s]" COLOR_RESET " %5.1f%%",
                     bar, pct);
             fprintf(stderr, " %s%s%s/%s%s%s",

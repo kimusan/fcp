@@ -414,8 +414,9 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                     ssize_t w_total = 0;
                     while (w_total < r) {
                         ssize_t w = write(fd_dst, buffer + w_total, r - w_total);
-                        if (w < 0) {
-                            if (errno == EINTR) continue;
+                        if (w <= 0) {
+                            if (w < 0 && errno == EINTR) continue;
+                            if (w == 0) errno = EIO;
                             seek_ok = false;
                             break;
                         }
@@ -516,8 +517,9 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                 ssize_t bytes_written = 0;
                 while (bytes_written < bytes_read) {
                     ssize_t w = write(fd_dst, buffer + bytes_written, bytes_read - bytes_written);
-                    if (w < 0) {
-                        if (errno == EINTR) continue;
+                    if (w <= 0) {
+                        if (w < 0 && errno == EINTR) continue;
+                        if (w == 0) errno = EIO;
                         close(fd_src);
                         close(fd_dst);
                         free(buffer);

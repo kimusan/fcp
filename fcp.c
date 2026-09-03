@@ -188,6 +188,7 @@ static void print_help(FILE *fp) {
         "  -i, --interactive        Prompt before overwrite\n"
         "  -n, --no-clobber         Do not overwrite an existing file\n"
         "  -f, --force              Remove existing destination first\n"
+        "      --remove-destination Alias for --force\n"
         "  -v, --verbose            Display names of copied files\n"
         "  -d, --no-dereference     Preserve symbolic links (default)\n"
         "  -L, --dereference        Copy files that symlinks refer to\n"

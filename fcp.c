@@ -77,6 +77,15 @@ static deferred_directory_metadata_t *g_deferred_directories = NULL;
 static size_t g_deferred_directory_count = 0;
 static size_t g_deferred_directory_capacity = 0;
 
+typedef struct {
+    dev_t device;
+    ino_t inode;
+} source_directory_t;
+
+static source_directory_t *g_source_directory_stack = NULL;
+static size_t g_source_directory_depth = 0;
+static size_t g_source_directory_capacity = 0;
+
 /* Scanning counter and error tracking (atomic for thread safety) */
 atomic_int g_files_scanned = 0;
 static atomic_int g_files_to_copy = 0;
@@ -505,6 +514,40 @@ static bool destination_is_within_source(const char *src, const char *dst) {
            (destination_path[source_len] == '\0' || destination_path[source_len] == '/');
 }
 
+static int enter_source_directory(const char *path) {
+    struct stat dir_stat;
+    if (stat(path, &dir_stat) != 0) {
+        return -1;
+    }
+    for (size_t i = 0; i < g_source_directory_depth; i++) {
+        if (g_source_directory_stack[i].device == dir_stat.st_dev &&
+            g_source_directory_stack[i].inode == dir_stat.st_ino) {
+            errno = ELOOP;
+            return -1;
+        }
+    }
+    if (g_source_directory_depth == g_source_directory_capacity) {
+        size_t capacity = g_source_directory_capacity ?
+                          g_source_directory_capacity * 2 : 32;
+        source_directory_t *stack = realloc(g_source_directory_stack,
+                                            capacity * sizeof(*stack));
+        if (!stack) {
+            return -1;
+        }
+        g_source_directory_stack = stack;
+        g_source_directory_capacity = capacity;
+    }
+    g_source_directory_stack[g_source_directory_depth++] =
+        (source_directory_t){ dir_stat.st_dev, dir_stat.st_ino };
+    return 0;
+}
+
+static void leave_source_directory(void) {
+    if (g_source_directory_depth > 0) {
+        g_source_directory_depth--;
+    }
+}
+
 /* Recursively copy a directory (populates queue) */
 static int copy_directory(const char *src, const char *dst) {
     struct dirent *de;
@@ -527,11 +570,18 @@ static int copy_directory(const char *src, const char *dst) {
         return -1;
     }
 
+    if (enter_source_directory(src) != 0) {
+        fprintf(stderr, "fcp: cannot recurse into '%s': %s\n", src, strerror(errno));
+        g_errors++;
+        return -1;
+    }
+
     /* Ensure destination exists */
     if (mkdir(clean_dst, 0755) != 0 && errno != EEXIST) {
         struct stat st;
         if (stat(clean_dst, &st) != 0 || !S_ISDIR(st.st_mode)) {
             fprintf(stderr, "fcp: cannot create directory '%s': %s\n", clean_dst, strerror(errno));
+            leave_source_directory();
             return -1;
         }
     }
@@ -539,6 +589,7 @@ static int copy_directory(const char *src, const char *dst) {
     dir = opendir(src);
     if (!dir) {
         fprintf(stderr, "fcp: cannot open directory '%s': %s\n", src, strerror(errno));
+        leave_source_directory();
         return -1;
     }
 
@@ -679,6 +730,7 @@ static int copy_directory(const char *src, const char *dst) {
         }
     }
 
+    leave_source_directory();
     return 0;
 }
 
@@ -1096,6 +1148,10 @@ cleanup:
     }
 
     apply_deferred_directory_metadata();
+    free(g_source_directory_stack);
+    g_source_directory_stack = NULL;
+    g_source_directory_depth = 0;
+    g_source_directory_capacity = 0;
 
     /* Print summary and cleanup progress */
     if (g_progress.enabled) {

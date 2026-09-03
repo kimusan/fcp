@@ -164,69 +164,113 @@ static int finalize_atomic_copy(int fd_dst, const char *tmp_dst, const char *dst
 /* Copy extended attributes between file descriptors or paths */
 int fcp_copy_xattrs(int fd_src, int fd_dst, const char *src_path, const char *dst_path) {
     ssize_t list_len;
-    char list[65536];
 
     if (fd_src >= 0) {
-        list_len = flistxattr(fd_src, list, sizeof(list));
+        list_len = flistxattr(fd_src, NULL, 0);
     } else if (src_path) {
-        list_len = llistxattr(src_path, list, sizeof(list));
+        list_len = llistxattr(src_path, NULL, 0);
     } else {
         return 0;
     }
 
-    if (list_len <= 0) return 0;
+    if (list_len < 0) return -1;
+    if (list_len == 0) return 0;
 
-    char val[65536];
+    char *list = malloc((size_t)list_len);
+    if (!list) return -1;
+    if (fd_src >= 0) {
+        list_len = flistxattr(fd_src, list, (size_t)list_len);
+    } else {
+        list_len = llistxattr(src_path, list, (size_t)list_len);
+    }
+    if (list_len < 0) {
+        free(list);
+        return -1;
+    }
+
     for (const char *name = list; name < list + list_len; name += strlen(name) + 1) {
         ssize_t val_len;
         if (fd_src >= 0) {
-            val_len = fgetxattr(fd_src, name, val, sizeof(val));
+            val_len = fgetxattr(fd_src, name, NULL, 0);
         } else {
-            val_len = lgetxattr(src_path, name, val, sizeof(val));
+            val_len = lgetxattr(src_path, name, NULL, 0);
         }
 
-        if (val_len < 0) continue;
+        if (val_len < 0) {
+            free(list);
+            return -1;
+        }
+        void *value = malloc(val_len > 0 ? (size_t)val_len : 1);
+        if (!value) {
+            free(list);
+            return -1;
+        }
+        if (fd_src >= 0) {
+            val_len = fgetxattr(fd_src, name, value, (size_t)val_len);
+        } else {
+            val_len = lgetxattr(src_path, name, value, (size_t)val_len);
+        }
+        if (val_len < 0) {
+            free(value);
+            free(list);
+            return -1;
+        }
 
+        int result;
         if (fd_dst >= 0) {
-            fsetxattr(fd_dst, name, val, val_len, 0);
+            result = fsetxattr(fd_dst, name, value, (size_t)val_len, 0);
         } else if (dst_path) {
-            lsetxattr(dst_path, name, val, val_len, 0);
+            result = lsetxattr(dst_path, name, value, (size_t)val_len, 0);
+        } else {
+            result = -1;
+            errno = EINVAL;
+        }
+        free(value);
+        if (result != 0) {
+            free(list);
+            return -1;
         }
     }
+    free(list);
     return 0;
 }
 
 /* Helper to apply metadata (permissions, ownership, timestamps, xattrs) */
-static void apply_metadata(int fd_dst, const char *dst_path, const struct stat *src_stat,
-                           int preserve_flags, int fd_src, const char *src_path) {
-    if (preserve_flags & FCP_PRESERVE_MODE) {
-        if (fd_dst >= 0) fchmod(fd_dst, src_stat->st_mode);
-        else if (dst_path) chmod(dst_path, src_stat->st_mode);
+static int apply_metadata(int fd_dst, const char *dst_path, const struct stat *src_stat,
+                          int preserve_flags, int fd_src, const char *src_path) {
+    if (preserve_flags & FCP_PRESERVE_OWNERSHIP) {
+        int result = fd_dst >= 0 ? fchown(fd_dst, src_stat->st_uid, src_stat->st_gid) :
+                     dst_path ? lchown(dst_path, src_stat->st_uid, src_stat->st_gid) : -1;
+        if (result != 0) {
+            return -1;
+        }
     }
 
-    if (preserve_flags & FCP_PRESERVE_OWNERSHIP) {
-        if (fd_dst >= 0) {
-            if (fchown(fd_dst, src_stat->st_uid, src_stat->st_gid) != 0 && errno != EPERM) {
-                /* ignore EPERM when not running as root */
-            }
-        } else if (dst_path) {
-            if (lchown(dst_path, src_stat->st_uid, src_stat->st_gid) != 0 && errno != EPERM) {
-                /* ignore EPERM */
-            }
+    if (preserve_flags & FCP_PRESERVE_MODE) {
+        int result = fd_dst >= 0 ? fchmod(fd_dst, src_stat->st_mode) :
+                     dst_path ? chmod(dst_path, src_stat->st_mode) : -1;
+        if (result != 0) {
+            return -1;
         }
     }
 
     if (preserve_flags & FCP_PRESERVE_XATTR) {
-        fcp_copy_xattrs(fd_src, fd_dst, src_path, dst_path);
+        if (fcp_copy_xattrs(fd_src, fd_dst, src_path, dst_path) != 0) {
+            return -1;
+        }
     }
 
     if (preserve_flags & FCP_PRESERVE_TIMESTAMPS) {
         struct timespec times[2];
         times[0] = src_stat->st_atim;
         times[1] = src_stat->st_mtim;
-        if (fd_dst >= 0) futimens(fd_dst, times);
-        else if (dst_path) utimensat(AT_FDCWD, dst_path, times, AT_SYMLINK_NOFOLLOW);
+        int result = fd_dst >= 0 ? futimens(fd_dst, times) :
+                     dst_path ? utimensat(AT_FDCWD, dst_path, times, AT_SYMLINK_NOFOLLOW) : -1;
+        if (result != 0) {
+            return -1;
+        }
     }
+    return 0;
 }
 
 int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse_mode,
@@ -294,7 +338,15 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                 fcp_progress_update_done(progress, file_size);
                 fcp_progress_render(progress);
             }
-            apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src);
+            if (apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src) != 0) {
+                int saved_errno = errno;
+                close(fd_dst);
+                close(fd_src);
+                if (atomic_mode) unlink(tmp_dst);
+                fprintf(stderr, "fcp: cannot preserve metadata for '%s': %s\n", dst,
+                        strerror(saved_errno));
+                return FCP_COPY_ERROR;
+            }
             if (atomic_mode) {
                 if (finalize_atomic_copy(fd_dst, tmp_dst, dst) != 0) {
                     close(fd_src);
@@ -325,7 +377,15 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
 
     /* If 0-byte file, finish immediately */
     if (file_size == 0) {
-        apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src);
+        if (apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src) != 0) {
+            int saved_errno = errno;
+            close(fd_dst);
+            close(fd_src);
+            if (atomic_mode) unlink(tmp_dst);
+            fprintf(stderr, "fcp: cannot preserve metadata for '%s': %s\n", dst,
+                    strerror(saved_errno));
+            return FCP_COPY_ERROR;
+        }
         if (atomic_mode) {
             if (finalize_atomic_copy(fd_dst, tmp_dst, dst) != 0) {
                 close(fd_src);
@@ -557,7 +617,16 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
     }
 
     /* Apply permissions, ownership, timestamps, and xattrs */
-    apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src);
+    if (apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src) != 0) {
+        int saved_errno = errno;
+        close(fd_src);
+        close(fd_dst);
+        free(buffer);
+        if (atomic_mode) unlink(tmp_dst);
+        fprintf(stderr, "fcp: cannot preserve metadata for '%s': %s\n", dst,
+                strerror(saved_errno));
+        return FCP_COPY_ERROR;
+    }
 
     if (atomic_mode) {
         if (finalize_atomic_copy(fd_dst, tmp_dst, dst) != 0) {

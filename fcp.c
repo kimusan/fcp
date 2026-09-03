@@ -48,6 +48,7 @@ static int opt_preserve = FCP_PRESERVE_DEFAULT;
 static int opt_atomic = 0;
 static uint64_t opt_speed_limit = 0;
 static int opt_no_progress = 0;
+static int opt_force_progress = 0;
 static int opt_no_color = 0;
 static int opt_verify_hash = 0;
 static char *opt_target_dir = NULL;
@@ -677,9 +678,11 @@ int main(int argc, char *argv[]) {
             case 'P':
             case 1003: /* --progress */
                 opt_no_progress = 0;
+                opt_force_progress = 1;
                 break;
             case 1004: /* --no-progress */
                 opt_no_progress = 1;
+                opt_force_progress = 0;
                 break;
             case 1005: /* --parallel */
                 if (parse_parallel_count(optarg, &opt_parallel) != 0) {
@@ -775,7 +778,9 @@ case 'h':
     }
 
     /* Initialize progress */
-    bool progress_enabled = !opt_no_progress && (!opt_dry_run || opt_verbose);
+    bool progress_enabled = !opt_no_progress &&
+                            (opt_force_progress || isatty_fd(STDERR_FILENO)) &&
+                            (!opt_dry_run || opt_verbose);
     fcp_set_colors_enabled(!opt_no_color);
     fcp_progress_init(&g_progress, progress_enabled);
 

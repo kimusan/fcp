@@ -157,6 +157,11 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
         fprintf(stderr, "fcp: cannot open '%s': %s\n", src, strerror(errno));
         return FCP_COPY_ERROR;
     }
+    if (fstat(fd_src, &src_stat) != 0) {
+        fprintf(stderr, "fcp: cannot stat '%s': %s\n", src, strerror(errno));
+        close(fd_src);
+        return FCP_COPY_ERROR;
+    }
 
     char tmp_dst[PATH_MAX + 128];
     const char *target_dst = dst;
@@ -303,7 +308,10 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                         seek_ok = false;
                         break;
                     }
-                    if (r == 0) break;
+                    if (r == 0) {
+                        seek_ok = false;
+                        break;
+                    }
 
                     ssize_t w_total = 0;
                     while (w_total < r) {
@@ -369,7 +377,12 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                     /* Disable CFR on error (e.g., EXDEV, EINVAL, ENOSYS) */
                     try_cfr = false;
                 } else {
-                    break;
+                    close(fd_src);
+                    close(fd_dst);
+                    free(buffer);
+                    if (atomic_mode) unlink(tmp_dst);
+                    fprintf(stderr, "fcp: unexpected end of '%s'\n", src);
+                    return FCP_COPY_ERROR;
                 }
             }
 
@@ -390,7 +403,14 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                     return FCP_COPY_ERROR;
                 }
 
-                if (bytes_read == 0) break;
+                if (bytes_read == 0) {
+                    close(fd_src);
+                    close(fd_dst);
+                    free(buffer);
+                    if (atomic_mode) unlink(tmp_dst);
+                    fprintf(stderr, "fcp: unexpected end of '%s'\n", src);
+                    return FCP_COPY_ERROR;
+                }
 
                 ssize_t bytes_written = 0;
                 while (bytes_written < bytes_read) {
@@ -439,6 +459,19 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
                 speed_last_update = now;
             }
         }
+    }
+
+    struct stat final_src_stat;
+    if (fstat(fd_src, &final_src_stat) != 0 ||
+        final_src_stat.st_size != src_stat.st_size ||
+        final_src_stat.st_mtim.tv_sec != src_stat.st_mtim.tv_sec ||
+        final_src_stat.st_mtim.tv_nsec != src_stat.st_mtim.tv_nsec) {
+        close(fd_src);
+        close(fd_dst);
+        free(buffer);
+        if (atomic_mode) unlink(tmp_dst);
+        fprintf(stderr, "fcp: source changed during copy '%s'\n", src);
+        return FCP_COPY_ERROR;
     }
 
     /* Apply permissions, ownership, timestamps, and xattrs */

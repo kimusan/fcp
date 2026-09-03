@@ -18,6 +18,9 @@ void fcp_queue_init(fcp_queue_t *queue, int initial_capacity) {
     if (initial_capacity <= 0) {
         initial_capacity = QUEUE_INITIAL_CAPACITY;
     }
+    if (initial_capacity > QUEUE_MAX_CAPACITY) {
+        initial_capacity = QUEUE_MAX_CAPACITY;
+    }
 
     queue->items = malloc(sizeof(fcp_queue_item_t) * initial_capacity);
     if (!queue->items) {
@@ -39,15 +42,17 @@ void fcp_queue_init(fcp_queue_t *queue, int initial_capacity) {
 int fcp_queue_push(fcp_queue_t *queue, const char *src, const char *dst, uint64_t size) {
     pthread_mutex_lock(&queue->mutex);
 
-    /* Grow queue if full */
-    if (queue->count >= queue->capacity) {
+    /* Grow until the bounded queue is full, then wait for a worker. */
+    while (queue->count >= queue->capacity) {
         if (queue->capacity >= QUEUE_MAX_CAPACITY) {
-            pthread_mutex_unlock(&queue->mutex);
-            fprintf(stderr, "fcp: queue full\n");
-            return -1;
+            pthread_cond_wait(&queue->cond_not_full, &queue->mutex);
+            continue;
         }
 
         int new_capacity = queue->capacity * 2;
+        if (new_capacity > QUEUE_MAX_CAPACITY) {
+            new_capacity = QUEUE_MAX_CAPACITY;
+        }
         fcp_queue_item_t *old_items = queue->items;
 
         /* Allocate new array and copy items (avoids realloc use-after-free) */

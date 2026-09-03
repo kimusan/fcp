@@ -481,7 +481,9 @@ static int copy_directory(const char *src, const char *dst) {
             } else {
                 g_files_to_copy++;
                 if (opt_parallel > 1) {
-                    fcp_queue_push(&g_queue, src_path, dst_path, st.st_size);
+                    if (fcp_queue_push(&g_queue, src_path, dst_path, st.st_size) != 0) {
+                        g_errors++;
+                    }
                 } else {
                     if (g_progress.enabled) {
                         fcp_progress_update_file(&g_progress, dst_path, st.st_size);
@@ -514,7 +516,9 @@ static int copy_directory(const char *src, const char *dst) {
                         copy_directory(src_path, dst_path);
                     } else if (S_ISREG(res_stat.st_mode)) {
                         if (opt_parallel > 1) {
-                            fcp_queue_push(&g_queue, src_path, dst_path, res_stat.st_size);
+                            if (fcp_queue_push(&g_queue, src_path, dst_path, res_stat.st_size) != 0) {
+                                g_errors++;
+                            }
                         } else {
                             copy_single_file(src_path, dst_path);
                         }
@@ -936,7 +940,9 @@ case 'h':
                 }
 
                 if (g_num_workers > 1) {
-                    fcp_queue_push(&g_queue, src, final_dst, st.st_size);
+                    if (fcp_queue_push(&g_queue, src, final_dst, st.st_size) != 0) {
+                        g_errors++;
+                    }
                 } else {
                     copy_single_file(src, final_dst);
                 }

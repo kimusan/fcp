@@ -334,7 +334,7 @@ static void *worker_thread(void *arg) {
                 g_files_skipped++;
                 g_bytes_skipped += item.size;
                 if (g_progress.enabled) {
-                    g_progress.total_done += item.size;
+                    fcp_progress_add_skipped_bytes(&g_progress, item.size);
                 }
             } else {
                 g_errors++;
@@ -470,10 +470,6 @@ static int copy_directory(const char *src, const char *dst) {
             if (identical == FCP_IDENTICAL_YES) {
                 g_files_skipped++;
                 g_bytes_skipped += st.st_size;
-                if (g_progress.enabled) {
-                    g_progress.total_all += st.st_size;
-                    g_progress.total_done += st.st_size;
-                }
                 fcp_progress_update_scanning(&g_progress, g_files_scanned, g_bytes_skipped, g_files_skipped, g_bytes_total);
                 if (opt_verbose) {
                     fprintf(stderr, "fcp: skipped identical '%s'\n", src_path);
@@ -866,7 +862,7 @@ case 'h':
         }
 
         if (g_progress.enabled) {
-            g_progress.total_all = g_bytes_total;
+            fcp_progress_set_total_bytes(&g_progress, g_bytes_total);
             fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
         }
     } else if (argc - optind > 2) {
@@ -905,7 +901,7 @@ case 'h':
         }
 
         if (g_progress.enabled) {
-            g_progress.total_all = g_bytes_total;
+            fcp_progress_set_total_bytes(&g_progress, g_bytes_total);
             fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
         }
     } else if (argc - optind == 2) {
@@ -924,7 +920,7 @@ case 'h':
             }
             copy_directory(src, dst);
             if (g_progress.enabled) {
-                g_progress.total_all = g_bytes_total;
+                fcp_progress_set_total_bytes(&g_progress, g_bytes_total);
                 fcp_progress_scanning_done(&g_progress, g_files_skipped, g_files_to_copy);
                 fcp_progress_render(&g_progress);
             }
@@ -948,7 +944,7 @@ case 'h':
                 /* Set up progress for single file - skip scanning phase */
                 if (g_progress.enabled) {
                     g_bytes_total = st.st_size;
-                    g_progress.total_all = st.st_size;
+                    fcp_progress_set_total_bytes(&g_progress, st.st_size);
                     g_progress.phase = FCP_PHASE_COPYING;
                     g_progress.last_update_time = 0; /* Force first render */
                 }

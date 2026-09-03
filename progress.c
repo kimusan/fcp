@@ -112,6 +112,18 @@ void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int
     pthread_mutex_unlock(&progress->mutex);
 }
 
+void fcp_progress_set_total_bytes(fcp_progress_t *progress, uint64_t total_bytes) {
+    pthread_mutex_lock(&progress->mutex);
+    progress->total_all = total_bytes;
+    pthread_mutex_unlock(&progress->mutex);
+}
+
+void fcp_progress_add_skipped_bytes(fcp_progress_t *progress, uint64_t bytes) {
+    pthread_mutex_lock(&progress->mutex);
+    progress->total_done += bytes;
+    pthread_mutex_unlock(&progress->mutex);
+}
+
 /* Update progress counters during copy phase (called from copy functions) */
 void fcp_progress_update_copy(fcp_progress_t *progress) {
     pthread_mutex_lock(&progress->mutex);

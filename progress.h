@@ -67,6 +67,12 @@ void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uin
 /* Mark scanning complete with summary */
 void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int files_to_copy);
 
+/* Set the final total byte count after scanning completes. */
+void fcp_progress_set_total_bytes(fcp_progress_t *progress, uint64_t total_bytes);
+
+/* Account for a file skipped after the initial scan. */
+void fcp_progress_add_skipped_bytes(fcp_progress_t *progress, uint64_t bytes);
+
 /* Update progress counters during copy phase (called from copy functions) */
 void fcp_progress_update_copy(fcp_progress_t *progress);
 

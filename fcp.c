@@ -66,6 +66,16 @@ static fcp_queue_t g_queue;
 static pthread_t *g_workers = NULL;
 static int g_num_workers = 0;
 
+typedef struct {
+    char *src;
+    char *dst;
+    struct stat stat;
+} deferred_directory_metadata_t;
+
+static deferred_directory_metadata_t *g_deferred_directories = NULL;
+static size_t g_deferred_directory_count = 0;
+static size_t g_deferred_directory_capacity = 0;
+
 /* Scanning counter and error tracking (atomic for thread safety) */
 atomic_int g_files_scanned = 0;
 static atomic_int g_files_to_copy = 0;
@@ -402,6 +412,61 @@ static int is_excluded(const char *name) {
     return 0;
 }
 
+static int defer_directory_metadata(const char *src, const char *dst,
+                                    const struct stat *stat) {
+    if (g_deferred_directory_count == g_deferred_directory_capacity) {
+        size_t capacity = g_deferred_directory_capacity ?
+                          g_deferred_directory_capacity * 2 : 32;
+        deferred_directory_metadata_t *entries = realloc(
+            g_deferred_directories, capacity * sizeof(*entries));
+        if (!entries) {
+            return -1;
+        }
+        g_deferred_directories = entries;
+        g_deferred_directory_capacity = capacity;
+    }
+
+    deferred_directory_metadata_t *entry =
+        &g_deferred_directories[g_deferred_directory_count];
+    entry->src = strdup(src);
+    entry->dst = strdup(dst);
+    if (!entry->src || !entry->dst) {
+        free(entry->src);
+        free(entry->dst);
+        return -1;
+    }
+    entry->stat = *stat;
+    g_deferred_directory_count++;
+    return 0;
+}
+
+static void apply_deferred_directory_metadata(void) {
+    for (size_t i = 0; i < g_deferred_directory_count; i++) {
+        deferred_directory_metadata_t *entry = &g_deferred_directories[i];
+
+        if (opt_preserve & FCP_PRESERVE_MODE) {
+            chmod(entry->dst, entry->stat.st_mode);
+        }
+        if (opt_preserve & FCP_PRESERVE_OWNERSHIP) {
+            if (chown(entry->dst, entry->stat.st_uid, entry->stat.st_gid) != 0 && errno != EPERM) {}
+        }
+        if (opt_preserve & FCP_PRESERVE_XATTR) {
+            fcp_copy_xattrs(-1, -1, entry->src, entry->dst);
+        }
+        if (opt_preserve & FCP_PRESERVE_TIMESTAMPS) {
+            struct timespec times[2] = { entry->stat.st_atim, entry->stat.st_mtim };
+            utimensat(AT_FDCWD, entry->dst, times, 0);
+        }
+
+        free(entry->src);
+        free(entry->dst);
+    }
+    free(g_deferred_directories);
+    g_deferred_directories = NULL;
+    g_deferred_directory_count = 0;
+    g_deferred_directory_capacity = 0;
+}
+
 /* Recursively copy a directory (populates queue) */
 static int copy_directory(const char *src, const char *dst) {
     struct dirent *de;
@@ -560,23 +625,13 @@ static int copy_directory(const char *src, const char *dst) {
 
     closedir(dir);
 
-    /* Preserve directory permissions, ownership, timestamps, and xattrs */
+    /* Apply directory metadata after queued children have finished copying. */
     struct stat dir_stat;
     if (stat(src, &dir_stat) == 0) {
-        if (opt_preserve & FCP_PRESERVE_MODE) {
-            chmod(clean_dst, dir_stat.st_mode);
-        }
-        if (opt_preserve & FCP_PRESERVE_OWNERSHIP) {
-            if (chown(clean_dst, dir_stat.st_uid, dir_stat.st_gid) != 0 && errno != EPERM) {}
-        }
-        if (opt_preserve & FCP_PRESERVE_XATTR) {
-            fcp_copy_xattrs(-1, -1, src, clean_dst);
-        }
-        if (opt_preserve & FCP_PRESERVE_TIMESTAMPS) {
-            struct timespec dtimes[2];
-            dtimes[0] = dir_stat.st_atim;
-            dtimes[1] = dir_stat.st_mtim;
-            utimensat(AT_FDCWD, clean_dst, dtimes, 0);
+        if (defer_directory_metadata(src, clean_dst, &dir_stat) != 0) {
+            fprintf(stderr, "fcp: cannot defer metadata for '%s': %s\n", clean_dst,
+                    strerror(errno));
+            g_errors++;
         }
     }
 
@@ -995,6 +1050,8 @@ cleanup:
         free(g_workers);
         g_workers = NULL;
     }
+
+    apply_deferred_directory_metadata();
 
     /* Print summary and cleanup progress */
     if (g_progress.enabled) {

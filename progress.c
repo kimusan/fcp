@@ -191,21 +191,32 @@ void fcp_progress_render(fcp_progress_t *progress) {
         }
         bar[marker] = '>';
 
-        /* Clear line and show scanning info with progress bar */
+        char done_size[32];
+        char discovered_size[32];
+        if (progress->total_all > 0) {
+            snprintf(done_size, sizeof(done_size), "%s", format_size(progress->total_done));
+            snprintf(discovered_size, sizeof(discovered_size), "%s", format_size(progress->total_all));
+        }
+
+        /* Clear line and show scanning activity. */
         if (use_color()) {
             fprintf(stderr, "\r\033[K" COLOR_BOLD "  Scanning..." COLOR_RESET
                     " %d files" COLOR_GRAY", %d identical" COLOR_RESET,
                     progress->files_scanned, progress->files_skipped_identical);
+            if (progress->total_all > 0) {
+                fprintf(stderr, " " COLOR_GREEN "[%s]" COLOR_RESET, bar);
+                fprintf(stderr, " " COLOR_CYAN "%s" COLOR_RESET, done_size);
+                fprintf(stderr, COLOR_GRAY " copied, " COLOR_RESET);
+                fprintf(stderr, COLOR_CYAN "%s" COLOR_RESET, discovered_size);
+                fprintf(stderr, COLOR_GRAY " discovered" COLOR_RESET);
+            }
         } else {
             fprintf(stderr, "\r  Scanning... %d files, %d identical",
                     progress->files_scanned, progress->files_skipped_identical);
-        }
-        if (progress->total_all > 0) {
-            fprintf(stderr, " " COLOR_GREEN "[%s]" COLOR_RESET, bar);
-            fprintf(stderr, " " COLOR_CYAN "%s" COLOR_RESET, format_size(progress->total_done));
-            fprintf(stderr, COLOR_GRAY " copied, " COLOR_RESET);
-            fprintf(stderr, COLOR_CYAN "%s" COLOR_RESET, format_size(progress->total_all));
-            fprintf(stderr, COLOR_GRAY " discovered" COLOR_RESET);
+            if (progress->total_all > 0) {
+                fprintf(stderr, " [%s] %s copied, %s discovered", bar,
+                        done_size, discovered_size);
+            }
         }
         fflush(stderr);
         pthread_mutex_unlock(&progress->mutex);

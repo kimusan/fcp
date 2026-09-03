@@ -2,7 +2,7 @@
 
 pkgname=fcp
 _pkgname=fcp
-pkgver=2.0.0
+pkgver=2.0.1
 pkgrel=1
 pkgdesc="Faster CP with progress, identical file detection, and parallelism"
 arch=('x86_64' 'aarch64')

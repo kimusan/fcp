@@ -37,7 +37,7 @@ sudo make install
 
 ```bash
 make deb
-sudo dpkg -i fcp_2.0.0_amd64.deb
+sudo dpkg -i fcp_2.0.1_amd64.deb
 ```
 
 ### Dependencies

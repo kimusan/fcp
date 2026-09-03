@@ -3,7 +3,7 @@
 # MIT License
 
 Name:           fcp
-Version:        2.0.0
+Version:        2.0.1
 Release:        1%{?dist}
 Summary:        Faster CP with progress, identical file detection, and parallelism
 
@@ -47,6 +47,9 @@ make install DESTDIR=%{buildroot} PREFIX=/usr
 %{_mandir}/man1/fcp.1*
 
 %changelog
+* Thu Sep 03 2026 Kim Schulz <kim@schulz.dk> - 2.0.1-1
+- Synchronize package metadata with the 2.0.1 release.
+
 * Fri Aug 21 2026 Kim Schulz <kim@schulz.dk> - 2.0.0-1
 - fcp v2.0.0 release with sparse copy, archive/metadata mode, and atomic copy
 

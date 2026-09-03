@@ -88,9 +88,9 @@ based on CPU count, capped at 8.
 
 .TP
 \fB\-\-verify\-hash\fR
-Use SHA256 hash comparison for identical file detection. By default,
-fcp uses file size and modification time for fast detection. Enable
-this option for cryptographically certain identical file detection.
+Use SHA256 hash comparison for all same-size files during identical-file
+detection. By default, fcp hashes only files whose size and modification
+time match.
 
 .TP
 \fB\-\-reflink=\fI[auto|always|never]\fR
@@ -199,7 +199,7 @@ Same inode and device: skip immediately (hardlinked files)
 .IP \(bu 2
 Different sizes: definitely different, copy
 .IP \(bu 2
-Same size and modification time: likely identical, skip
+Same size and modification time: compare SHA256 before skipping
 .IP \(bu 2
 Same size, different time, \fB\-\-verify\-hash\fR: SHA256 compare
 .RE

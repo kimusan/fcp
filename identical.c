@@ -34,15 +34,17 @@ int fcp_check_identical(const char *src, const char *dst, bool verify_hash) {
         return FCP_IDENTICAL_NO;
     }
 
-    /* If verify_hash is NOT enabled: use fast mtime check */
-    if (!verify_hash) {
-        if (src_stat.st_mtime == dst_stat.st_mtime) {
-            return FCP_IDENTICAL_YES;
-        }
+    /*
+     * Without --verify-hash, mtime is only a fast rejection. Matching
+     * timestamps are not proof that the file contents match.
+     */
+    if (!verify_hash &&
+        (src_stat.st_mtim.tv_sec != dst_stat.st_mtim.tv_sec ||
+         src_stat.st_mtim.tv_nsec != dst_stat.st_mtim.tv_nsec)) {
         return FCP_IDENTICAL_NO;
     }
 
-    /* Check 3: verify_hash is enabled -> compute and compare SHA256 */
+    /* Confirm matching candidates with SHA256 before skipping the copy. */
     char src_hash[FCP_HASH_HEX_LEN];
     char dst_hash[FCP_HASH_HEX_LEN];
 

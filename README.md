@@ -5,7 +5,7 @@ A faster replacement for the classic `cp` command with modern features including
 ## Features
 
 - **Progress bar**: Visual progress with ETA, speed, and file info
-- **Identical file detection**: Skips files that are already copied (rsync-style: size+mtime + optional SHA256)
+- **Identical file detection**: Skips files only after SHA256 confirmation; timestamps avoid unnecessary hashing by default
 - **Parallel copy**: Multiple worker threads for faster bulk transfers
 - **Sparse file acceleration**: Linux `SEEK_DATA`/`SEEK_HOLE` extent copying without writing zero-blocks to disk
 - **Archive & metadata mode**: Full preservation of permissions, ownership, timestamps, and extended attributes (`xattrs`)
@@ -104,7 +104,7 @@ fcp -f important.txt ~/backup/important.txt
 | `--sparse=[auto\|always\|never]` | auto | Detect & accelerate sparse file copying |
 | `--atomic` | off | Atomically replace destination via temp file + rename |
 | `--exclude=PATTERN` | - | Exclude files matching PATTERN (glob, can be repeated) |
-| `--verify-hash` | off | Use SHA256 for identical detection |
+| `--verify-hash` | off | Use SHA256 for all same-size identical-file checks |
 | `--reflink=[auto\|always\|never]` | auto | Use reflink (FICLONE) when supported |
 | `--dry-run` | off | Preview without copying |
 | `--speed-limit=SIZE` | no limit | Cap copy speed (e.g., `10M`, `1G`) |
@@ -156,7 +156,7 @@ CLI options override config file settings. Config file settings override default
 
 1. **Same inode+device**: Instant skip (hardlinked files)
 2. **Different sizes**: Definitely different, copy
-3. **Same size+mtime**: Likely identical, skip (default)
+3. **Same size+mtime**: SHA256 comparison before skipping (default)
 4. **Same size, different time, `--verify-hash`**: SHA256 comparison
 
 This approach balances speed and accuracy, similar to rsync's strategy.

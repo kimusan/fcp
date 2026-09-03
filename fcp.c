@@ -30,6 +30,7 @@
 #include <stdatomic.h>
 #include <signal.h>
 #include <sys/xattr.h>
+#include <limits.h>
 
 /* Global options */
 static int opt_recursive = 0;
@@ -467,6 +468,43 @@ static void apply_deferred_directory_metadata(void) {
     g_deferred_directory_capacity = 0;
 }
 
+static bool destination_is_within_source(const char *src, const char *dst) {
+    char source_path[PATH_MAX];
+    char destination_path[PATH_MAX];
+    char destination_copy[PATH_MAX];
+    char parent_path[PATH_MAX];
+    char base_path[PATH_MAX];
+
+    if (!realpath(src, source_path)) {
+        return false;
+    }
+    if (!realpath(dst, destination_path)) {
+        if (snprintf(destination_copy, sizeof(destination_copy), "%s", dst) >=
+            (int)sizeof(destination_copy)) {
+            return false;
+        }
+        char *base = basename(destination_copy);
+        if (snprintf(base_path, sizeof(base_path), "%s", base) >=
+            (int)sizeof(base_path)) {
+            return false;
+        }
+        if (snprintf(destination_copy, sizeof(destination_copy), "%s", dst) >=
+            (int)sizeof(destination_copy)) {
+            return false;
+        }
+        char *parent = dirname(destination_copy);
+        if (!realpath(parent, parent_path) ||
+            snprintf(destination_path, sizeof(destination_path), "%s/%s", parent_path, base_path) >=
+            (int)sizeof(destination_path)) {
+            return false;
+        }
+    }
+
+    size_t source_len = strlen(source_path);
+    return strncmp(source_path, destination_path, source_len) == 0 &&
+           (destination_path[source_len] == '\0' || destination_path[source_len] == '/');
+}
+
 /* Recursively copy a directory (populates queue) */
 static int copy_directory(const char *src, const char *dst) {
     struct dirent *de;
@@ -481,6 +519,12 @@ static int copy_directory(const char *src, const char *dst) {
     while (dst_len > 1 && clean_dst[dst_len - 1] == '/') {
         clean_dst[dst_len - 1] = '\0';
         dst_len--;
+    }
+
+    if (destination_is_within_source(src, clean_dst)) {
+        fprintf(stderr, "fcp: cannot copy '%s' into itself '%s'\n", src, clean_dst);
+        g_errors++;
+        return -1;
     }
 
     /* Ensure destination exists */

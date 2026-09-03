@@ -168,7 +168,7 @@ jobs:
           pkgname = fcp
           pkgbase = fcp
           pkgver = ${VERSION}-1
-          pkgdesc = Faster CP with progress, identical file detection, and parallelism
+          pkgdesc = Linux copy tool with progress, safety checks, and parallelism
           url = https://github.com/kimusan/fcp
           builddate = ${BUILDDATE}
           packager = Kim Schulz <kim@schulz.dk>

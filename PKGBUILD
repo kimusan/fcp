@@ -2,9 +2,9 @@
 
 pkgname=fcp
 _pkgname=fcp
-pkgver=2.0.1
+pkgver=2.1.0
 pkgrel=1
-pkgdesc="Faster CP with progress, identical file detection, and parallelism"
+pkgdesc="Linux copy tool with progress, safety checks, and parallelism"
 arch=('x86_64' 'aarch64')
 url="https://github.com/kimusan/fcp"
 license=('MIT')

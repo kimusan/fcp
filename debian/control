@@ -9,16 +9,17 @@ Rules-Requires-Root: no
 Package: fcp
 Architecture: any
 Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: Faster CP with progress, identical file detection, and parallelism
- fcp is a faster replacement for the standard cp command with enhanced
+Description: Linux copy tool with progress, safety checks, and parallelism
+ fcp is a Linux copy tool with familiar cp invocation forms and enhanced
  features including:
-  * Visual progress bar with ETA and speed estimation
-  * Identical file detection (rsync-style: size+mtime + optional SHA256)
-  * Parallel copy support with configurable worker count
-  * Reflink support for instant copies on Btrfs/XFS
-  * Speed limiting with --speed-limit
-  * Dry-run mode for previewing copies
-  * Colored output for better visibility
+  * Smooth terminal progress with ETA, rate, and parallel activity
+ * Identical file detection (rsync-style: size+mtime + optional SHA256)
+ * Parallel copy support with configurable worker count
+ * Reflink support for instant copies on Btrfs/XFS
+  * Sparse file acceleration and atomic file replacement
+ * Speed limiting with --speed-limit
+ * Dry-run mode for previewing copies
+ * Colored output for better visibility
  .
- fcp is fully compatible with cp's command-line interface and adds
- several new options for improved functionality.
+ fcp supports a focused set of common cp options and adds progress and
+ performance features; it is not a complete GNU cp implementation.

@@ -284,8 +284,8 @@ void fcp_progress_render(fcp_progress_t *progress) {
     snprintf(total_size, sizeof(total_size), "%s",
              format_size(progress->total_all > 0 ? progress->total_all : progress->current_total));
 
-    /* Clear line and render */
-    fprintf(stderr, "\r");
+    /* Clear an earlier, longer colored line before redrawing it. */
+    fprintf(stderr, use_color() ? "\r\033[K" : "\r");
 
     if (use_color()) {
         /* Show scanned/skipped counter */

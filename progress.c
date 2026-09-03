@@ -6,6 +6,7 @@
 
 #include "progress.h"
 #include "util.h"
+#include "colors.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,11 +29,7 @@
 #define COLOR_GRAY    "\033[90m"
 
 static bool use_color(void) {
-    static int cached = -1;
-    if (cached == -1) {
-        cached = isatty_fd(STDERR_FILENO);
-    }
-    return cached != 0;
+    return fcp_use_colors();
 }
 
 static double clock_gettime_sec(void) {
@@ -55,8 +52,12 @@ void fcp_progress_banner(fcp_progress_t *progress, const char *src, const char *
     if (!progress->enabled) return;
 
     pthread_mutex_lock(&progress->mutex);
-    fprintf(stderr, COLOR_BOLD "fcp" COLOR_RESET ": copying" COLOR_CYAN " %s" COLOR_RESET
-            " -> " COLOR_CYAN " %s" COLOR_RESET "\n", src, dst);
+    if (use_color()) {
+        fprintf(stderr, COLOR_BOLD "fcp" COLOR_RESET ": copying" COLOR_CYAN " %s" COLOR_RESET
+                " -> " COLOR_CYAN " %s" COLOR_RESET "\n", src, dst);
+    } else {
+        fprintf(stderr, "fcp: copying %s -> %s\n", src, dst);
+    }
     fflush(stderr);
     pthread_mutex_unlock(&progress->mutex);
 }
@@ -97,10 +98,15 @@ void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int
 
     if (progress->enabled) {
         /* Clear scanning progress line and move to new line */
-        fprintf(stderr, "\r\033[K");
+        fprintf(stderr, use_color() ? "\r\033[K" : "\r");
         fprintf(stderr, "\n");
-        fprintf(stderr, "  %d files to copy" COLOR_GRAY", %d identical skipped" COLOR_RESET "\n",
-                files_to_copy, files_skipped);
+        if (use_color()) {
+            fprintf(stderr, "  %d files to copy" COLOR_GRAY", %d identical skipped" COLOR_RESET "\n",
+                    files_to_copy, files_skipped);
+        } else {
+            fprintf(stderr, "  %d files to copy, %d identical skipped\n",
+                    files_to_copy, files_skipped);
+        }
         fflush(stderr);
     }
     pthread_mutex_unlock(&progress->mutex);
@@ -174,9 +180,14 @@ void fcp_progress_render(fcp_progress_t *progress) {
         bar[PROGRESS_BAR_WIDTH] = '\0';
 
         /* Clear line and show scanning info with progress bar */
-        fprintf(stderr, "\r\033[K" COLOR_BOLD "  Scanning..." COLOR_RESET
-                " %d files" COLOR_GRAY", %d identical" COLOR_RESET,
-                progress->files_scanned, progress->files_skipped_identical);
+        if (use_color()) {
+            fprintf(stderr, "\r\033[K" COLOR_BOLD "  Scanning..." COLOR_RESET
+                    " %d files" COLOR_GRAY", %d identical" COLOR_RESET,
+                    progress->files_scanned, progress->files_skipped_identical);
+        } else {
+            fprintf(stderr, "\r  Scanning... %d files, %d identical",
+                    progress->files_scanned, progress->files_skipped_identical);
+        }
         if (progress->total_all > 0) {
             fprintf(stderr, " " COLOR_GREEN "[%s]" COLOR_RESET " %5.1f%%",
                     bar, pct);
@@ -283,13 +294,23 @@ void fcp_progress_summary(fcp_progress_t *progress) {
     pthread_mutex_lock(&progress->mutex);
     double elapsed = clock_gettime_sec() - progress->start_time;
 
-    fprintf(stderr, "\r" COLOR_BOLD "fcp" COLOR_RESET ": done" COLOR_GRAY
-            " in %.1fs" COLOR_RESET ", %s transferred",
-            elapsed, format_size(progress->total_done));
+    if (use_color()) {
+        fprintf(stderr, "\r" COLOR_BOLD "fcp" COLOR_RESET ": done" COLOR_GRAY
+                " in %.1fs" COLOR_RESET ", %s transferred",
+                elapsed, format_size(progress->total_done));
+    } else {
+        fprintf(stderr, "\rfcp: done in %.1fs, %s transferred",
+                elapsed, format_size(progress->total_done));
+    }
 
     if (progress->files_skipped_identical > 0) {
-        fprintf(stderr, COLOR_GRAY ", %d files skipped (identical)" COLOR_RESET,
-                progress->files_skipped_identical);
+        if (use_color()) {
+            fprintf(stderr, COLOR_GRAY ", %d files skipped (identical)" COLOR_RESET,
+                    progress->files_skipped_identical);
+        } else {
+            fprintf(stderr, ", %d files skipped (identical)",
+                    progress->files_skipped_identical);
+        }
     }
 
     fprintf(stderr, "\n");
@@ -300,7 +321,7 @@ void fcp_progress_summary(fcp_progress_t *progress) {
 void fcp_progress_cleanup(fcp_progress_t *progress) {
     if (progress->enabled) {
         /* Move to a new line */
-        fprintf(stderr, "\r\033[K\n");
+        fprintf(stderr, use_color() ? "\r\033[K\n" : "\r\n");
         fflush(stderr);
     }
     pthread_mutex_destroy(&progress->mutex);

@@ -11,8 +11,18 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-/* Check if colors should be used (based on terminal and environment) */
+static bool colors_enabled = true;
+
+void fcp_set_colors_enabled(bool enabled) {
+    colors_enabled = enabled;
+}
+
+/* Check if colors should be used (based on settings, terminal, and environment) */
 bool fcp_use_colors(void) {
+    if (!colors_enabled) {
+        return false;
+    }
+
     /* Check NO_COLOR environment variable */
     if (getenv("NO_COLOR") != NULL) {
         return false;

@@ -9,7 +9,10 @@
 
 #include <stdbool.h>
 
-/* Check if colors should be used (based on terminal and environment) */
+/* Enable or disable colors requested through configuration or the CLI. */
+void fcp_set_colors_enabled(bool enabled);
+
+/* Check if colors should be used (based on settings, terminal, and environment) */
 bool fcp_use_colors(void);
 
 /* Get color for progress bar fill */

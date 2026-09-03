@@ -754,6 +754,7 @@ case 'h':
 
     /* Initialize progress */
     bool progress_enabled = !opt_no_progress && (!opt_dry_run || opt_verbose);
+    fcp_set_colors_enabled(!opt_no_color);
     fcp_progress_init(&g_progress, progress_enabled);
 
     /* Print startup banner */

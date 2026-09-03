@@ -275,7 +275,8 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
         fd_dst = create_atomic_temp(dst, tmp_dst, sizeof(tmp_dst));
         target_dst = tmp_dst;
     } else {
-        fd_dst = open(target_dst, O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode);
+        fd_dst = open(target_dst, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW,
+                      src_stat.st_mode);
     }
     if (fd_dst < 0) {
         close(fd_src);

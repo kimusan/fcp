@@ -57,6 +57,79 @@ static int create_atomic_temp(const char *dst, char *tmp_dst, size_t tmp_dst_siz
     return mkostemp(tmp_dst, O_CLOEXEC);
 }
 
+static int sync_parent_directory(const char *path) {
+    char directory[PATH_MAX];
+    const char *slash = strrchr(path, '/');
+
+    if (!slash) {
+        strcpy(directory, ".");
+    } else if (slash == path) {
+        strcpy(directory, "/");
+    } else {
+        size_t length = (size_t)(slash - path);
+        if (length >= sizeof(directory)) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        memcpy(directory, path, length);
+        directory[length] = '\0';
+    }
+
+    int directory_fd = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (directory_fd < 0) {
+        return -1;
+    }
+
+    int result = fsync(directory_fd);
+    int saved_errno = result == 0 ? 0 : errno;
+    if (close(directory_fd) != 0 && result == 0) {
+        result = -1;
+        saved_errno = errno;
+    }
+    if (result != 0) {
+        errno = saved_errno;
+    }
+    return result;
+}
+
+static int finalize_atomic_copy(int fd_dst, const char *tmp_dst, const char *dst) {
+    if (fdatasync(fd_dst) != 0) {
+        int saved_errno = errno;
+        close(fd_dst);
+        unlink(tmp_dst);
+        fprintf(stderr, "fcp: cannot sync '%s': %s\n", tmp_dst, strerror(saved_errno));
+        errno = saved_errno;
+        return -1;
+    }
+
+    if (close(fd_dst) != 0) {
+        int saved_errno = errno;
+        unlink(tmp_dst);
+        fprintf(stderr, "fcp: cannot close '%s': %s\n", tmp_dst, strerror(saved_errno));
+        errno = saved_errno;
+        return -1;
+    }
+
+    if (rename(tmp_dst, dst) != 0) {
+        int saved_errno = errno;
+        unlink(tmp_dst);
+        fprintf(stderr, "fcp: atomic rename failed '%s' -> '%s': %s\n",
+                tmp_dst, dst, strerror(saved_errno));
+        errno = saved_errno;
+        return -1;
+    }
+
+    if (sync_parent_directory(dst) != 0) {
+        int saved_errno = errno;
+        fprintf(stderr, "fcp: cannot sync destination directory for '%s': %s\n",
+                dst, strerror(saved_errno));
+        errno = saved_errno;
+        return -1;
+    }
+
+    return 0;
+}
+
 /* Copy extended attributes between file descriptors or paths */
 int fcp_copy_xattrs(int fd_src, int fd_dst, const char *src_path, const char *dst_path) {
     ssize_t list_len;
@@ -191,10 +264,7 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
             }
             apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src);
             if (atomic_mode) {
-                fdatasync(fd_dst);
-                close(fd_dst);
-                if (rename(tmp_dst, dst) != 0) {
-                    unlink(tmp_dst);
+                if (finalize_atomic_copy(fd_dst, tmp_dst, dst) != 0) {
                     close(fd_src);
                     return FCP_COPY_ERROR;
                 }
@@ -225,10 +295,7 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
     if (file_size == 0) {
         apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src);
         if (atomic_mode) {
-            fdatasync(fd_dst);
-            close(fd_dst);
-            if (rename(tmp_dst, dst) != 0) {
-                unlink(tmp_dst);
+            if (finalize_atomic_copy(fd_dst, tmp_dst, dst) != 0) {
                 close(fd_src);
                 return FCP_COPY_ERROR;
             }
@@ -478,11 +545,7 @@ int fcp_copy_file(const char *src, const char *dst, int reflink_mode, int sparse
     apply_metadata(fd_dst, target_dst, &src_stat, preserve_flags, fd_src, src);
 
     if (atomic_mode) {
-        fdatasync(fd_dst);
-        close(fd_dst);
-        if (rename(tmp_dst, dst) != 0) {
-            fprintf(stderr, "fcp: atomic rename failed '%s' -> '%s': %s\n", tmp_dst, dst, strerror(errno));
-            unlink(tmp_dst);
+        if (finalize_atomic_copy(fd_dst, tmp_dst, dst) != 0) {
             close(fd_src);
             free(buffer);
             return FCP_COPY_ERROR;

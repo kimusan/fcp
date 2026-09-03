@@ -76,12 +76,11 @@ void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan) {
     pthread_mutex_unlock(&progress->mutex);
 }
 
-void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found, uint64_t bytes_processed, int files_skipped, uint64_t total_bytes_found) {
+void fcp_progress_update_scanning(fcp_progress_t *progress, int files_found,
+                                  int files_skipped, uint64_t total_bytes_found) {
     pthread_mutex_lock(&progress->mutex);
     progress->files_scanned = files_found;
     progress->files_skipped_identical = files_skipped;
-    /* bytes_processed is the current total of skipped bytes (not incremental) */
-    progress->total_done = bytes_processed;
     /* Track total bytes found so we can show progress during scanning */
     if (total_bytes_found > progress->total_all) {
         progress->total_all = total_bytes_found;

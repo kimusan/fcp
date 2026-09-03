@@ -296,8 +296,8 @@ void fcp_progress_summary(fcp_progress_t *progress) {
     if (!progress->enabled) return;
 
     pthread_mutex_lock(&progress->mutex);
-    /* Ensure progress bar shows 100% before summary */
-    progress->total_done = progress->total_all;
+    /* Force one final redraw with the bytes actually accounted for. */
+    progress->last_update_time = 0;
     pthread_mutex_unlock(&progress->mutex);
 
     fcp_progress_render(progress);

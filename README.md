@@ -1,21 +1,24 @@
 # fcp - Faster CP
 
-A faster replacement for the classic `cp` command with modern features including visual progress bars, identical file detection, parallel copy support, sparse file acceleration, metadata/archive preservation, and atomic file replacement.
+A Linux copy tool with familiar `cp` syntax, a smooth terminal progress display,
+parallel directory copies, and safeguards for long-running transfers. It supports
+the common `cp` workflows documented below; it is not a complete GNU `cp`
+implementation.
 
 ## Features
 
-- **Progress bar**: Visual progress with ETA, speed, and file info
+- **Progress bar**: Smooth aggregate ETA, speed, file info, and active-worker count without hiding the completed transfer
 - **Identical file detection**: Skips files only after SHA256 confirmation; timestamps avoid unnecessary hashing by default
 - **Parallel copy**: Multiple worker threads for faster bulk transfers
 - **Sparse file acceleration**: Linux `SEEK_DATA`/`SEEK_HOLE` extent copying without writing zero-blocks to disk
 - **Archive & metadata mode**: Full preservation of permissions, ownership, timestamps, and extended attributes (`xattrs`)
-- **Atomic copy mode**: Crash-resilient staging with `fdatasync()` and atomic `rename()` replacement
+- **Atomic copy mode**: Crash-resilient staging with `fdatasync()`, atomic `rename()`, and parent-directory sync
 - **Reflink support**: Instant copies on Btrfs/XFS filesystems via FICLONE
-- **Speed limiting**: Cap copy bandwidth with `--speed-limit`
+- **Speed limiting**: Cap total copy bandwidth across all workers with `--speed-limit`
 - **Dry-run mode**: Preview what would be copied without copying
 - **Colored output**: Visual feedback with ANSI colors (auto-detected)
 - **Config file**: Persistent settings in `~/.config/fcp/config`
-- **cp compatible**: Full command-line compatibility with standard `cp`
+- **Common cp-style CLI**: Familiar operands and common archive, recursive, overwrite, link, and target-directory options
 
 ## Installation
 
@@ -89,16 +92,19 @@ fcp -f important.txt ~/backup/important.txt
 | `-n, --no-clobber` | Do not overwrite existing files |
 | `-f, --force` | Remove existing destination first |
 | `-v, --verbose` | Display copied file names |
-| `-d, --dereference` | Copy what symlinks point to |
+| `-d, --no-dereference` | Preserve symbolic links (the default) |
+| `-L, --dereference` | Copy what symbolic links point to |
 | `-s, --symbolic` | Create symlinks instead of copying |
 | `-u, --update` | Copy only when source is newer |
 | `-t, --target-directory=DIRECTORY` | Copy all sources into DIRECTORY |
+| `-T, --no-target-directory` | Treat DESTINATION as a normal path, even if it is a directory |
+| `--remove-destination` | Alias for `--force` |
 
 ### fcp-specific options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-P, --progress` | auto | Show progress bar |
+| `-P, --progress` | auto | Show progress; forced even when stderr is redirected |
 | `--no-progress` | - | Disable progress display |
 | `--parallel=[N\|auto]` | auto | Parallel copy workers (default: nproc, max 8) |
 | `--sparse=[auto\|always\|never]` | auto | Detect & accelerate sparse file copying |
@@ -161,9 +167,26 @@ CLI options override config file settings. Config file settings override default
 
 This approach balances speed and accuracy, similar to rsync's strategy.
 
+## Compatibility and Safety
+
+`fcp` accepts the common `cp` forms (`SOURCE DESTINATION`, multiple sources to a
+directory, and `-t DIRECTORY`) and options such as `-a`, `-p`, `-r`, `-i`,
+`-n`, `-f`, `-d`, `-L`, `-s`, `-u`, and `-T`. Some GNU `cp` options, including
+backup modes, are not implemented. Unlike GNU `cp`, `-P` means progress; use
+`-d` to preserve symlinks or `-L` to dereference them.
+
+Progress is automatic only when stderr is a terminal, so redirected output
+stays clean. During a recursive scan it shows activity rather than a misleading
+percentage; during copying it retains the final accounted state and summarizes
+parallel activity.
+
+For safety, fcp detects source changes during copying, reports requested
+metadata/xattr preservation failures, refuses a direct symlink destination, and
+rejects recursive destinations inside the source or dereferenced symlink cycles.
+
 ## Performance
 
-`fcp` is optimized for speed through several mechanisms:
+`fcp` is optimized for Linux filesystems through several mechanisms:
 
 - **copy_file_range()**: Zero-copy transfers on Linux 4.5+
 - **Sparse copy**: Extent-based zero-I/O skipping with `SEEK_DATA`/`SEEK_HOLE`
@@ -171,6 +194,10 @@ This approach balances speed and accuracy, similar to rsync's strategy.
 - **Reflinks**: Instant copies on Btrfs/XFS via FICLONE
 - **Large buffers**: 1MB copy buffers reduce syscall overhead
 - **Sequential I/O hint**: Optimizes read-ahead behavior
+
+`copy_file_range()`, `SEEK_DATA`/`SEEK_HOLE`, and FICLONE are Linux/kernel and
+filesystem dependent. In `auto` modes fcp falls back when an optimization is
+unavailable; `--reflink=always` intentionally fails instead.
 
 ### Parallel Copy
 
@@ -242,7 +269,7 @@ Contributions are welcome! Please:
 ## Roadmap
 
 - [x] `--exclude` pattern filtering (like rsync)
-- [x] Full CLI options & standard `cp` compatibility
+- [x] Common `cp`-style operands and options
 - [x] High-performance direct FICLONE reflink
 - [x] Sparse file acceleration (`--sparse=auto|always|never`) with `SEEK_HOLE`/`SEEK_DATA` (v2.0)
 - [x] Full metadata preservation & archive mode (`-a, --archive` / `-p, --preserve`) (v2.0)

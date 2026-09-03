@@ -8,12 +8,13 @@ fcp \- faster copy with progress, identical file detection, and parallelism
 .B fcp
 [\fIOPTION\fR]... \fISOURCE\fR... \fIDIRECTORY\fR
 .SH DESCRIPTION
-\fBfcp\fP is a faster replacement for the standard \fBcp\fP command with
-enhanced features including visual progress bars, identical file detection,
-parallel copy support, sparse file acceleration, and more.
+\fBfcp\fP is a Linux copy tool with familiar \fBcp\fP invocation forms and
+a smooth terminal progress display, identical-file detection, parallel copy
+support, and sparse-file acceleration.
 
-It is fully compatible with \fBcp\fP's command-line interface and adds
-several new options for improved functionality.
+It supports a focused set of common \fBcp\fP options; it is not a complete
+GNU \fBcp\fP implementation. Unlike GNU \fBcp\fP, \fB-P\fP means progress.
+Use \fB-d\fP to preserve symbolic links or \fB-L\fP to dereference them.
 
 .SH OPTIONS
 .TP
@@ -50,8 +51,12 @@ Remove existing destination files before copying.
 Display names of copied files.
 
 .TP
-\fB\-d\fR, \fB\-\-dereference\fR
-Copy the files that symlinks refer to, not the symlinks themselves.
+\fB\-d\fR, \fB\-\-no\-dereference\fR
+Preserve symbolic links instead of copying their targets. This is the default.
+
+.TP
+\fB\-L\fR, \fB\-\-dereference\fR
+Copy the files that symbolic links refer to, not the links themselves.
 
 .TP
 \fB\-s\fR, \fB\-\-symbolic\fR
@@ -66,9 +71,19 @@ Copy only when the source file is newer than the destination file.
 Copy all sources into the specified DIRECTORY.
 
 .TP
+\fB\-T\fR, \fB\-\-no\-target\-directory\fR
+Treat DESTINATION as a normal path even when it names a directory. Cannot be
+combined with \fB-t\fR and accepts only one source.
+
+.TP
+\fB\-\-remove\-destination\fR
+Alias for \fB--force\fR.
+
+.TP
 \fB\-P\fR, \fB\-\-progress\fR
-Show progress bar during copy operations. Enabled by default when
-outputting to a terminal.
+Show progress during copy operations. Progress is enabled automatically when
+standard error is a terminal; \fB-P\fR also forces it when standard error is
+redirected.
 
 .TP
 \fB\-\-no\-progress\fR
@@ -113,7 +128,7 @@ Shows the files that would be processed.
 
 .TP
 \fB\-\-speed\-limit=\fISIZE\fR
-Cap the copy speed. SIZE can be a number with optional suffix:
+Cap aggregate copy speed across all workers. SIZE can be a number with optional suffix:
 .RS 4
 .PP
 \fBK\fR or \fBk\fR: Kilobytes (1024 bytes)
@@ -145,7 +160,7 @@ are smaller than logical file size.
 \fB\-\-atomic\fR
 Atomically replace the destination file upon completion. The copy is written
 to a hidden temporary file in the destination directory, flushed with \fBfdatasync()\fR,
-and swapped via \fBrename()\fR.
+swapped via \fBrename()\fR, and followed by a parent-directory sync.
 
 .TP
 \fB\-\-exclude=\fIPATTERN\fR
@@ -209,6 +224,18 @@ Same size, different time, \fB\-\-verify\-hash\fR: SHA256 compare
 This approach is similar to rsync's strategy: use the cheapest
 check first, escalating only when necessary.
 
+.SH SAFETY AND PROGRESS
+.PP
+During recursive discovery, fcp shows scan activity instead of an unreliable
+percentage. During copying, the terminal display shows aggregate transferred
+and total bytes, rate, ETA, and parallel activity; the completed state remains
+visible before the summary.
+.PP
+fcp detects source changes during copying and reports failures to preserve
+requested metadata or extended attributes. It refuses a direct symlink as the
+destination and rejects recursive destinations inside the source and
+dereferenced symbolic-link cycles.
+
 .SH PERFORMANCE
 .PP
 \fBfcp\fR is optimized for speed through several mechanisms:
@@ -216,7 +243,7 @@ check first, escalating only when necessary.
 .RS 4
 .IP \(bu 2
 \fBCopy file range\fR: Uses the \fBcopy_file_range()\fR syscall for
-zero\-copy transfers when available (Linux 4.5+)
+in-kernel transfers when available (Linux 4.5+)
 .IP \(bu 2
 \fBParallel workers\fR: Multiple threads can copy different files
 simultaneously
@@ -227,6 +254,11 @@ simultaneously
 .IP \(bu 2
 \fBSequential I/O hint\fR: Advises the kernel for optimal read-ahead
 .RE
+
+.PP
+These optimizations depend on the Linux kernel and filesystem. In automatic
+mode, fcp falls back when an optimization is unavailable; \fB--reflink=always\fR
+fails if reflinks are unsupported.
 
 .SH EXAMPLES
 .PP

@@ -453,19 +453,26 @@ static int defer_directory_metadata(const char *src, const char *dst,
 static void apply_deferred_directory_metadata(void) {
     for (size_t i = 0; i < g_deferred_directory_count; i++) {
         deferred_directory_metadata_t *entry = &g_deferred_directories[i];
+        int result = 0;
 
-        if (opt_preserve & FCP_PRESERVE_MODE) {
-            chmod(entry->dst, entry->stat.st_mode);
-        }
         if (opt_preserve & FCP_PRESERVE_OWNERSHIP) {
-            if (chown(entry->dst, entry->stat.st_uid, entry->stat.st_gid) != 0 && errno != EPERM) {}
+            result = chown(entry->dst, entry->stat.st_uid, entry->stat.st_gid);
         }
-        if (opt_preserve & FCP_PRESERVE_XATTR) {
-            fcp_copy_xattrs(-1, -1, entry->src, entry->dst);
+        if (result == 0 && (opt_preserve & FCP_PRESERVE_MODE)) {
+            result = chmod(entry->dst, entry->stat.st_mode);
         }
-        if (opt_preserve & FCP_PRESERVE_TIMESTAMPS) {
+        if (result == 0 && (opt_preserve & FCP_PRESERVE_XATTR)) {
+            result = fcp_copy_xattrs(-1, -1, entry->src, entry->dst);
+        }
+        if (result == 0 && (opt_preserve & FCP_PRESERVE_TIMESTAMPS)) {
             struct timespec times[2] = { entry->stat.st_atim, entry->stat.st_mtim };
-            utimensat(AT_FDCWD, entry->dst, times, 0);
+            result = utimensat(AT_FDCWD, entry->dst, times, 0);
+        }
+        if (result != 0) {
+            int saved_errno = errno;
+            fprintf(stderr, "fcp: cannot preserve directory metadata for '%s': %s\n",
+                    entry->dst, strerror(saved_errno));
+            g_errors++;
         }
 
         free(entry->src);
@@ -700,11 +707,23 @@ static int copy_directory(const char *src, const char *dst) {
                         fprintf(stderr, "fcp: cannot create symlink '%s': %s\n", dst_path, strerror(errno));
                         g_errors++;
                     } else {
+                        int metadata_result = 0;
                         if (opt_preserve & FCP_PRESERVE_OWNERSHIP) {
-                            if (lchown(dst_path, st.st_uid, st.st_gid) != 0 && errno != EPERM) {}
+                            metadata_result = lchown(dst_path, st.st_uid, st.st_gid);
                         }
-                        if (opt_preserve & FCP_PRESERVE_XATTR) {
-                            fcp_copy_xattrs(-1, -1, src_path, dst_path);
+                        if (metadata_result == 0 && (opt_preserve & FCP_PRESERVE_XATTR)) {
+                            metadata_result = fcp_copy_xattrs(-1, -1, src_path, dst_path);
+                        }
+                        if (metadata_result == 0 && (opt_preserve & FCP_PRESERVE_TIMESTAMPS)) {
+                            struct timespec times[2] = { st.st_atim, st.st_mtim };
+                            metadata_result = utimensat(AT_FDCWD, dst_path, times,
+                                                        AT_SYMLINK_NOFOLLOW);
+                        }
+                        if (metadata_result != 0) {
+                            int saved_errno = errno;
+                            fprintf(stderr, "fcp: cannot preserve symlink metadata for '%s': %s\n",
+                                    dst_path, strerror(saved_errno));
+                            g_errors++;
                         }
                         if (opt_verbose) {
                             fprintf(stderr, "fcp: '%s' -> '%s'\n", dst_path, target);

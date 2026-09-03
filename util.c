@@ -44,12 +44,15 @@ const char *format_speed(double bytes_per_sec) {
 
     if (val >= 1024.0 * 1024 * 1024 * 1024) {
         val /= 1024.0 * 1024 * 1024 * 1024;
-        unit = "GB/s";
+        unit = "TB/s";
     } else if (val >= 1024.0 * 1024 * 1024) {
         val /= 1024.0 * 1024 * 1024;
-        unit = "MB/s";
+        unit = "GB/s";
     } else if (val >= 1024.0 * 1024) {
         val /= 1024.0 * 1024;
+        unit = "MB/s";
+    } else if (val >= 1024.0) {
+        val /= 1024.0;
         unit = "KB/s";
     }
 

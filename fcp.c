@@ -39,6 +39,7 @@ static int opt_no_clobber = 0;
 static int opt_force = 0;
 static int opt_verbose = 0;
 static int opt_dereference = 0;
+static int opt_no_target_directory = 0;
 static int opt_symbolic = 0;
 static int opt_update = 0;
 static int opt_dry_run = 0;
@@ -145,10 +146,13 @@ static const struct option long_options[] = {
     {"no-clobber",     no_argument,       NULL, 'n'},
     {"force",          no_argument,       NULL, 'f'},
     {"verbose",        no_argument,       NULL, 'v'},
-    {"dereference",    no_argument,       NULL, 'd'},
+    {"dereference",    no_argument,       NULL, 'L'},
+    {"no-dereference", no_argument,       NULL, 'd'},
     {"symbolic",       no_argument,       NULL, 's'},
     {"update",         no_argument,       NULL, 'u'},
     {"target-directory", required_argument, NULL, 't'},
+    {"no-target-directory", no_argument,  NULL, 'T'},
+    {"remove-destination", no_argument,  NULL, 1017},
     {"progress",       no_argument,       NULL, 'P'},
     {"no-progress",    no_argument,       NULL, 1004},
     {"parallel",       required_argument, NULL, 1005},
@@ -185,10 +189,12 @@ static void print_help(FILE *fp) {
         "  -n, --no-clobber         Do not overwrite an existing file\n"
         "  -f, --force              Remove existing destination first\n"
         "  -v, --verbose            Display names of copied files\n"
-        "  -d, --dereference        Copy files that symlinks refer to\n"
+        "  -d, --no-dereference     Preserve symbolic links (default)\n"
+        "  -L, --dereference        Copy files that symlinks refer to\n"
         "  -s, --symbolic           Create symlinks instead of copying\n"
         "  -u, --update             Copy only when source is newer\n"
         "  -t, --target-directory   Copy all sources into DIRECTORY\n"
+        "  -T, --no-target-directory  Treat DEST as a normal file\n"
         "\n"
         "Performance & advanced options:\n"
         "  -P, --progress           Show progress bar (default: auto)\n"
@@ -803,7 +809,7 @@ int main(int argc, char *argv[]) {
     opt_no_progress = g_config.progress_auto ? 0 : 1;
     opt_no_color = g_config.color_auto ? 0 : 1;
 
-    while ((opt = getopt_long(argc, argv, "rRiInfvdsut:aPhVp::", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "rRiInfvdLsut:TaPhVp::", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'a':
                 opt_recursive = 1;
@@ -834,6 +840,9 @@ int main(int argc, char *argv[]) {
                 opt_verbose = 1;
                 break;
             case 'd':
+                opt_dereference = 0;
+                break;
+            case 'L':
                 opt_dereference = 1;
                 break;
             case 's':
@@ -844,6 +853,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 't':
                 opt_target_dir = optarg;
+                break;
+            case 'T':
+                opt_no_target_directory = 1;
                 break;
             case 'P':
             case 1003: /* --progress */
@@ -904,6 +916,9 @@ int main(int argc, char *argv[]) {
             case 1016: /* --atomic */
                 opt_atomic = 1;
                 break;
+            case 1017: /* --remove-destination */
+                opt_force = 1;
+                break;
 case 'h':
             print_help(stdout);
             return 0;
@@ -933,6 +948,11 @@ case 'h':
         return 1;
     }
 
+    if (opt_no_target_directory && opt_target_dir) {
+        fprintf(stderr, "fcp: cannot combine -T and -t\n");
+        return 1;
+    }
+
     /* Need at least 2 arguments for source and destination */
     if (optind + 1 >= argc && !opt_target_dir) {
         if (!opt_recursive) {
@@ -940,6 +960,11 @@ case 'h':
             print_help(stderr);
             return 1;
         }
+    }
+
+    if (opt_no_target_directory && !opt_target_dir && argc - optind > 2) {
+        fprintf(stderr, "fcp: extra operand '%s'\n", argv[optind + 2]);
+        return 1;
     }
 
     /* Interactive prompts must be answered in destination order. */
@@ -1117,7 +1142,7 @@ case 'h':
         } else {
             /* For single file, just copy directly */
             char *final_dst = NULL;
-            if (path_is_dir(dst)) {
+            if (!opt_no_target_directory && path_is_dir(dst)) {
                 const char *basename = strrchr(src, '/');
                 basename = basename ? basename + 1 : src;
                 final_dst = malloc(strlen(dst) + strlen(basename) + 2);

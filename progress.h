@@ -53,6 +53,7 @@ typedef struct fcp_progress_s {
     double last_update_time;
     double last_speed_time;
     uint64_t last_speed_bytes;
+    unsigned int plain_line_width;
 
     /* Performance stats */
     double speed; /* bytes per second */

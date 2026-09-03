@@ -98,6 +98,7 @@ void fcp_progress_set_scanning(fcp_progress_t *progress, int files_to_scan) {
     progress->total_all = 0;
     progress->last_speed_time = 0;
     progress->last_speed_bytes = 0;
+    progress->plain_line_width = 0;
     progress->last_update_time = 0; /* Force first render */
     pthread_mutex_unlock(&progress->mutex);
 }
@@ -122,6 +123,7 @@ void fcp_progress_scanning_done(fcp_progress_t *progress, int files_skipped, int
     progress->last_update_time = 0; /* Force first render in copy phase */
     progress->last_speed_time = 0;
     progress->last_speed_bytes = progress->total_done;
+    progress->plain_line_width = 0;
 
     if (progress->enabled) {
         /* Clear scanning progress line and move to new line */
@@ -362,12 +364,21 @@ void fcp_progress_render(fcp_progress_t *progress) {
                     COLOR_CYAN, eta_str, COLOR_RESET);
         }
     } else {
-        fprintf(stderr, "Scanned: %d, Skipped: %d | ",
-                progress->files_scanned, progress->files_skipped_identical);
-        fprintf(stderr, "[%s] %5.1f%%", bar, pct);
-        fprintf(stderr, " %s/%s", done_size, total_size);
-        fprintf(stderr, " %s", format_speed(progress->speed));
-        fprintf(stderr, " ETA %s", eta_str);
+        char line[256];
+        int written = snprintf(line, sizeof(line),
+                               "Scanned: %d, Skipped: %d | [%s] %5.1f%% %s/%s %s ETA %s",
+                               progress->files_scanned, progress->files_skipped_identical,
+                               bar, pct, done_size, total_size,
+                               format_speed(progress->speed), eta_str);
+        if (written > 0) {
+            unsigned int width = written < (int)sizeof(line) ?
+                                 (unsigned int)written : (unsigned int)strlen(line);
+            fputs(line, stderr);
+            if (progress->plain_line_width > width) {
+                fprintf(stderr, "%*s", progress->plain_line_width - width, "");
+            }
+            progress->plain_line_width = width;
+        }
     }
 
     fflush(stderr);

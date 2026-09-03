@@ -248,6 +248,12 @@ void fcp_progress_render(fcp_progress_t *progress) {
     }
     bar[PROGRESS_BAR_WIDTH] = '\0';
 
+    char done_size[32];
+    char total_size[32];
+    snprintf(done_size, sizeof(done_size), "%s", format_size(progress->total_done));
+    snprintf(total_size, sizeof(total_size), "%s",
+             format_size(progress->total_all > 0 ? progress->total_all : progress->current_total));
+
     /* Clear line and render */
     fprintf(stderr, "\r");
 
@@ -262,8 +268,8 @@ void fcp_progress_render(fcp_progress_t *progress) {
             fprintf(stderr, " " COLOR_GREEN "[%s]" COLOR_RESET " %5.1f%%",
                     bar, pct);
             fprintf(stderr, " %s%s%s/%s%s%s",
-                    COLOR_CYAN, format_size(progress->total_done), COLOR_RESET,
-                    COLOR_CYAN, format_size(progress->total_all > 0 ? progress->total_all : progress->current_total), COLOR_RESET);
+                    COLOR_CYAN, done_size, COLOR_RESET,
+                    COLOR_CYAN, total_size, COLOR_RESET);
             fprintf(stderr, " %s%s%s" COLOR_GRAY" | ETA %s%s%s",
                     COLOR_YELLOW, format_speed(progress->speed), COLOR_RESET,
                     COLOR_CYAN, eta_str, COLOR_RESET);
@@ -271,8 +277,8 @@ void fcp_progress_render(fcp_progress_t *progress) {
             fprintf(stderr, COLOR_GREEN "[%s]" COLOR_RESET " %5.1f%%",
                     bar, pct);
             fprintf(stderr, " %s%s%s/%s%s%s",
-                    COLOR_CYAN, format_size(progress->total_done), COLOR_RESET,
-                    COLOR_CYAN, format_size(progress->total_all), COLOR_RESET);
+                    COLOR_CYAN, done_size, COLOR_RESET,
+                    COLOR_CYAN, total_size, COLOR_RESET);
             fprintf(stderr, " %s%s%s" COLOR_GRAY" | ETA %s%s%s",
                     COLOR_YELLOW, format_speed(progress->speed), COLOR_RESET,
                     COLOR_CYAN, eta_str, COLOR_RESET);
@@ -281,8 +287,7 @@ void fcp_progress_render(fcp_progress_t *progress) {
         fprintf(stderr, "Scanned: %d, Skipped: %d | ",
                 progress->files_scanned, progress->files_skipped_identical);
         fprintf(stderr, "[%s] %5.1f%%", bar, pct);
-        fprintf(stderr, " %s/%s", format_size(progress->total_done),
-                format_size(progress->total_all > 0 ? progress->total_all : progress->current_total));
+        fprintf(stderr, " %s/%s", done_size, total_size);
         fprintf(stderr, " %s", format_speed(progress->speed));
         fprintf(stderr, " ETA %s", eta_str);
     }
